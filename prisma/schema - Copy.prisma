@@ -1,0 +1,282 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Department {
+  id                    Int                    @id @default(autoincrement())
+  name                  String
+  status                String                 @default("Active")
+  parentDepartmentId    Int?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime
+  parentDepartment      Department?            @relation("DepartmentHierarchy", fields: [parentDepartmentId], references: [id])
+  subDepartments        Department[]           @relation("DepartmentHierarchy")
+  owningDocuments       Document[]             @relation("OwningDepartment")
+  incomingDistributions IncomingDistribution[] @relation("IncomingTargetDept")
+  users                 User[]
+}
+
+model User {
+  id                            Int                    @id @default(autoincrement())
+  fullName                      String
+  jobTitle                      String?
+  email                         String?                @unique
+  username                      String                 @unique
+  passwordHash                  String
+  isActive                      Boolean                @default(true)
+  departmentId                  Int?
+  createdAt                     DateTime               @default(now())
+  lastLoginAt                   DateTime?
+  AuditTrail                    AuditTrail[]
+  documentsCreated              Document[]             @relation("UserCreatedDocuments")
+  uploadedFiles                 DocumentFile[]         @relation("UserUploadedFiles")
+  assignedIncomingDistributions IncomingDistribution[] @relation("AssignedIncomingDistributions")
+  incomingReceived              IncomingRecord[]       @relation("UserReceivedIncoming")
+  OutgoingRecord                OutgoingRecord[]
+  department                    Department?            @relation(fields: [departmentId], references: [id])
+  UserRole                      UserRole[]
+  WorkflowStepAction            WorkflowStepAction[]
+
+  logsUpdatedByMe               IncomingDistributionLog[] @relation("LogsUpdatedByUser")
+}
+
+model SecurityLevel {
+  id          Int        @id @default(autoincrement())
+  levelName   String
+  description String?
+  rankOrder   Int
+  documents   Document[]
+}
+
+model DocumentType {
+  id             Int        @id @default(autoincrement())
+  typeName       String
+  isIncomingType Boolean    @default(false)
+  isOutgoingType Boolean    @default(false)
+  isInternalMemo Boolean    @default(false)
+  description    String?
+  documents      Document[]
+}
+
+model Document {
+  id                   BigInt             @id @default(autoincrement())
+  title                String
+  summary              String?
+  currentStatus        String             @default("Draft")
+  isPhysicalCopyExists Boolean            @default(false)
+  physicalLocation     String?
+  isDeleted            Boolean            @default(false)
+  createdAt            DateTime           @default(now())
+  documentTypeId       Int
+  securityLevelId      Int
+  createdByUserId      Int
+  owningDepartmentId   Int
+  AuditTrail           AuditTrail[]
+  createdByUser        User               @relation("UserCreatedDocuments", fields: [createdByUserId], references: [id])
+  documentType         DocumentType       @relation(fields: [documentTypeId], references: [id])
+  owningDepartment     Department         @relation("OwningDepartment", fields: [owningDepartmentId], references: [id])
+  securityLevel        SecurityLevel      @relation(fields: [securityLevelId], references: [id])
+  files                DocumentFile[]
+  DocumentMetadata     DocumentMetadata[]
+  DocumentTagLink      DocumentTagLink[]
+  incomingRecord       IncomingRecord?
+  OutgoingRecord       OutgoingRecord?
+  WorkflowInstance     WorkflowInstance[]
+
+  @@index([currentStatus])
+  @@index([owningDepartmentId])
+}
+
+model DocumentFile {
+  id               BigInt   @id @default(autoincrement())
+  documentId       BigInt
+  fileNameOriginal String
+  storagePath      String
+  fileExtension    String
+  fileSizeBytes    BigInt
+  checksumHash     String
+  versionNumber    Int
+  isLatestVersion  Boolean  @default(true)
+  uploadedByUserId Int
+  uploadedAt       DateTime @default(now())
+  document         Document @relation(fields: [documentId], references: [id])
+  uploadedByUser   User     @relation("UserUploadedFiles", fields: [uploadedByUserId], references: [id])
+}
+
+model ExternalParty {
+  id              Int              @id @default(autoincrement())
+  name            String
+  type            String?
+  contactInfo     String?
+  status          String?          @default("Active")
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime
+  incomingRecords IncomingRecord[]
+  OutgoingRecord  OutgoingRecord[]
+}
+
+model IncomingRecord {
+  id                 BigInt                 @id @default(autoincrement())
+  documentId         BigInt                 @unique
+  externalPartyId    Int
+  receivedDate       DateTime
+  receivedByUserId   Int
+  incomingNumber     String                 @unique
+  deliveryMethod     String
+  urgencyLevel       String?
+  requiredAction     String?
+  dueDateForResponse DateTime?
+  receivedAt         DateTime               @default(now())
+  distributions      IncomingDistribution[]
+  document           Document               @relation(fields: [documentId], references: [id])
+  externalParty      ExternalParty          @relation(fields: [externalPartyId], references: [id])
+  receivedByUser     User                   @relation("UserReceivedIncoming", fields: [receivedByUserId], references: [id])
+}
+
+model IncomingDistribution {
+  id                 BigInt         @id @default(autoincrement())
+  incomingId         BigInt
+  targetDepartmentId Int
+  assignedToUserId   Int?
+  status             String         @default("Open")
+  notes              String?
+  lastUpdateAt       DateTime       @default(now())
+  assignedToUser     User?          @relation("AssignedIncomingDistributions", fields: [assignedToUserId], references: [id])
+  incoming           IncomingRecord @relation(fields: [incomingId], references: [id])
+  targetDepartment   Department     @relation("IncomingTargetDept", fields: [targetDepartmentId], references: [id])
+
+  logs               IncomingDistributionLog[]
+
+  @@index([targetDepartmentId])
+  @@index([status])
+}
+
+model AuditTrail {
+  id                BigInt    @id @default(autoincrement())
+  documentId        BigInt?
+  userId            Int?
+  actionType        String
+  actionDescription String?
+  actionAt          DateTime  @default(now())
+  fromIP            String?
+  workstationName   String?
+  Document          Document? @relation(fields: [documentId], references: [id])
+  User              User?     @relation(fields: [userId], references: [id])
+}
+
+model DocumentMetadata {
+  id           BigInt   @id @default(autoincrement())
+  documentId   BigInt
+  metaKey      String
+  metaValue    String
+  isSearchable Boolean  @default(true)
+  Document     Document @relation(fields: [documentId], references: [id])
+
+  @@index([metaKey])
+  @@index([metaValue])
+}
+
+model DocumentTag {
+  id              Int               @id @default(autoincrement())
+  tagName         String            @unique
+  DocumentTagLink DocumentTagLink[]
+}
+
+model DocumentTagLink {
+  id          BigInt      @id @default(autoincrement())
+  documentId  BigInt
+  tagId       Int
+  Document    Document    @relation(fields: [documentId], references: [id])
+  DocumentTag DocumentTag @relation(fields: [tagId], references: [id])
+
+  @@unique([documentId, tagId])
+}
+
+model OutgoingRecord {
+  id                BigInt        @id @default(autoincrement())
+  documentId        BigInt        @unique
+  externalPartyId   Int
+  outgoingNumber    String        @unique
+  issueDate         DateTime
+  signedByUserId    Int
+  sendMethod        String
+  isDelivered       Boolean       @default(false)
+  deliveryProofPath String?
+  createdAt         DateTime      @default(now())
+  Document          Document      @relation(fields: [documentId], references: [id])
+  ExternalParty     ExternalParty @relation(fields: [externalPartyId], references: [id])
+  User              User          @relation(fields: [signedByUserId], references: [id])
+}
+
+model Role {
+  id          Int        @id @default(autoincrement())
+  roleName    String     @unique
+  description String?
+  UserRole    UserRole[]
+}
+
+model UserRole {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  roleId     Int
+  assignedAt DateTime @default(now())
+  Role       Role     @relation(fields: [roleId], references: [id])
+  User       User     @relation(fields: [userId], references: [id])
+
+  @@unique([userId, roleId])
+}
+
+model WorkflowInstance {
+  id                 BigInt               @id @default(autoincrement())
+  documentId         BigInt
+  currentStep        String
+  status             String               @default("InProgress")
+  startedAt          DateTime             @default(now())
+  endedAt            DateTime?
+  Document           Document             @relation(fields: [documentId], references: [id])
+  WorkflowStepAction WorkflowStepAction[]
+}
+
+model WorkflowStepAction {
+  id               BigInt           @id @default(autoincrement())
+  workflowId       BigInt
+  stepName         String
+  actionType       String
+  actionByUserId   Int
+  actionAt         DateTime         @default(now())
+  notes            String?
+  requiredNextStep String?
+  User             User             @relation(fields: [actionByUserId], references: [id])
+  WorkflowInstance WorkflowInstance @relation(fields: [workflowId], references: [id])
+}
+
+
+model IncomingDistributionLog {
+  id               BigInt               @id @default(autoincrement())
+
+  // لأي توزيع يخص هذا السجل؟
+  distributionId   BigInt
+  distribution     IncomingDistribution @relation(fields: [distributionId], references: [id])
+
+  // الحالة قبل وبعد
+  oldStatus        String?
+  newStatus        String?
+
+  // ملاحظة المتابعة اللي كتبها الموظف (مثلاً: "أرسلنا الموضوع للشؤون القانونية")
+  note             String?
+
+  // من قام بهذي الخطوة؟
+  updatedByUserId  Int
+  updatedByUser    User                @relation("LogsUpdatedByUser", fields: [updatedByUserId], references: [id])
+
+  // متى تم التحديث؟
+  createdAt        DateTime            @default(now())
+
+  @@index([distributionId])
+  @@index([createdAt])
+}
