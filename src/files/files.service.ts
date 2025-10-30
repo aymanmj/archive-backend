@@ -1,242 +1,186 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import * as fs from 'node:fs/promises';
 import * as path from 'node:path';
-import { createHash } from 'node:crypto';
+import * as fs from 'node:fs/promises';
+import * as fssync from 'node:fs';
+import * as crypto from 'node:crypto';
+
+type AttachArgs = {
+  documentId: string;           // يُقبل string أو رقم، سنحوّله BigInt بأمان
+  originalName: string;
+  mimetype: string;
+  tempPath: string;             // مكان الملف المؤقت الذي حفظه Multer
+  sizeBytes: number;
+  uploadedByUserId: number;
+};
 
 @Injectable()
 export class FilesService {
   constructor(private prisma: PrismaService) {}
 
-  private getUploadRoot() {
-    // يمكن تغييره ب ENV: UPLOAD_DIR
-    return process.env.UPLOAD_DIR || path.join(process.cwd(), 'uploads');
-  }
-
-  async ensureDocumentExists(documentId: bigint) {
-    const doc = await this.prisma.document.findUnique({
-      where: { id: documentId },
-      select: { id: true },
-    });
-    if (!doc) throw new NotFoundException('الوثيقة غير موجودة');
-  }
-
-  async calcSha256(filePath: string): Promise<string> {
-    const buf = await fs.readFile(filePath);
-    const hash = createHash('sha256').update(buf).digest('hex');
-    return hash;
-  }
-
-  async getNextVersion(documentId: bigint): Promise<number> {
-    const last = await this.prisma.documentFile.findFirst({
-      where: { documentId },
-      orderBy: { versionNumber: 'desc' },
-      select: { versionNumber: true },
-    });
-    return last ? last.versionNumber + 1 : 1;
-  }
-
-  async markOldVersionsNotLatest(documentId: bigint) {
-    await this.prisma.documentFile.updateMany({
-      where: { documentId, isLatestVersion: true },
-      data: { isLatestVersion: false },
+  // حساب SHA-256 للملف (لمنع تكرار أو للتحقق مستقبلاً)
+  private async sha256(filePath: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const hash = crypto.createHash('sha256');
+      const s = fssync.createReadStream(filePath);
+      s.on('error', reject);
+      s.on('data', (d) => hash.update(d));
+      s.on('end', () => resolve(hash.digest('hex')));
     });
   }
 
-  /**
-   * يحفظ الملف ويُنشئ سجل DocumentFile
-   * @returns السجل الجديد + url جاهز للواجهة
-   */
-  async attachFileToDocument(params: {
-    documentId: string; // as string from route
-    originalName: string;
-    mimetype: string;
-    tempPath: string; // multer temp
-    sizeBytes: number;
-    uploadedByUserId: number;
-  }) {
-    // 1) تحويل معرّف الوثيقة إلى BigInt والتحقق من وجود الوثيقة
-    let docId: bigint;
+  // تأكد من وجود مجلّد
+  private async ensureDir(dir: string) {
+    await fs.mkdir(dir, { recursive: true });
+  }
+
+  // تحوّيل documentId إلى BigInt بشكل آمن
+  private toBigIntId(id: string | number): bigint {
     try {
-      docId = BigInt(params.documentId);
+      return BigInt(id as any);
     } catch {
       throw new BadRequestException('documentId غير صالح');
     }
-    await this.ensureDocumentExists(docId);
+  }
 
-    // 2) حساب sha256
-    const checksum = await this.calcSha256(params.tempPath);
+  /**
+   * يربط ملفًا بوثيقة:
+   * - يتحقق من وجود الوثيقة
+   * - ينقل الملف من tmp إلى uploads/<documentId>/YYYYMMDD_HHmmss_original
+   * - يحتسب checksum
+   * - يحفظ سجل DocumentFile مع ترقيم الإصدارات تلقائيًا
+   */
+  async attachFileToDocument(args: AttachArgs) {
+    const {
+      documentId,
+      originalName,
+      mimetype,
+      tempPath,
+      sizeBytes,
+      uploadedByUserId,
+    } = args;
 
-    // 3) تجهيز مسار الحفظ النهائي: uploads/<docId>/<timestamp>_<original>
-    const root = this.getUploadRoot();
-    const docDir = path.join(root, params.documentId);
-    await fs.mkdir(docDir, { recursive: true });
+    if (!tempPath || !fssync.existsSync(tempPath)) {
+      throw new BadRequestException('لم يتم استلام الملف (tempPath مفقود)');
+    }
+    if (!originalName?.trim()) {
+      throw new BadRequestException('اسم الملف الأصلي مفقود');
+    }
+    if (!mimetype?.trim()) {
+      throw new BadRequestException('نوع الملف غير معروف');
+    }
+    if (!uploadedByUserId) {
+      throw new BadRequestException('المستخدم غير معروف');
+    }
 
-    const safeName = params.originalName.replace(/[^\p{L}\p{N}\.\-_\s]/gu, '_');
-    const finalName = `${Date.now()}_${safeName}`;
-    const finalPath = path.join(docDir, finalName);
+    const docIdBig = this.toBigIntId(documentId);
 
-    // 4) نقل الملف من tmp إلى المكان النهائي
-    await fs.rename(params.tempPath, finalPath);
+    // تحقق من وجود الوثيقة
+    const doc = await this.prisma.document.findUnique({
+      where: { id: docIdBig },
+      select: { id: true },
+    });
+    if (!doc) {
+      // نظّف الملف المؤقت ثم ارمِ الخطأ
+      try { await fs.unlink(tempPath); } catch {}
+      throw new NotFoundException('الوثيقة غير موجودة (documentId خاطئ)');
+    }
 
-    // 5) حساب رقم النسخة وتحديث isLatestVersion
-    const nextVersion = await this.getNextVersion(docId);
-    await this.markOldVersionsNotLatest(docId);
+    // إنشاء مسار الوجهة
+    const baseUploads = path.join(process.cwd(), 'uploads');
+    const destDir = path.join(baseUploads, documentId.toString());
+    await this.ensureDir(destDir);
 
-    // 6) تحضير بيانات السجل
-    const storagePath = path.join(params.documentId, finalName).replace(/\\/g, '/');
-    const fileExt = path.extname(params.originalName || '').replace('.', '').toLowerCase();
+    // اسم ملف جديد آمن
+    const timestamp =
+      new Date().toISOString().replace(/[-:T.Z]/g, '').slice(0, 14); // YYYYMMDDHHmmss
+    const safeOriginal = originalName.replace(/[^\w.\-() ]+/g, '_');
+    const newFileName = `${timestamp}_${safeOriginal}`;
+    const destPath = path.join(destDir, newFileName);
 
-    const rec = await this.prisma.documentFile.create({
+    // انقل الملف من tmp إلى الوجهة
+    await fs.rename(tempPath, destPath);
+
+    // احسب الهاش
+    const checksum = await this.sha256(destPath);
+
+    // اجلب آخر نسخة + حدّد رقم الإصدار الجديد
+    const last = await this.prisma.documentFile.findFirst({
+      where: { documentId: docIdBig },
+      orderBy: { versionNumber: 'desc' },
+      select: { versionNumber: true },
+    });
+    const nextVersion = (last?.versionNumber ?? 0) + 1;
+
+    // حدّد الامتداد والحجم
+    const ext = path.extname(safeOriginal).replace('.', '').toLowerCase();
+    const storagePath = path.join(documentId.toString(), newFileName).replace(/\\/g, '/');
+
+    // علّم الإصدارات السابقة بأنها ليست الأحدث
+    if (nextVersion > 1) {
+      await this.prisma.documentFile.updateMany({
+        where: { documentId: docIdBig, isLatestVersion: true },
+        data: { isLatestVersion: false },
+      });
+    }
+
+    // خزّن القيّد
+    const saved = await this.prisma.documentFile.create({
       data: {
-        documentId: docId,
-        fileNameOriginal: params.originalName,
+        documentId: docIdBig,
+        fileNameOriginal: safeOriginal,
         storagePath,
-        fileExtension: fileExt || 'bin',
-        fileSizeBytes: BigInt(params.sizeBytes),
+        fileExtension: ext || 'bin',
+        fileSizeBytes: BigInt(sizeBytes),
         checksumHash: checksum,
         versionNumber: nextVersion,
         isLatestVersion: true,
-        uploadedByUserId: params.uploadedByUserId,
+        uploadedByUserId,
         uploadedAt: new Date(),
       },
-      select: {
-        id: true,
-        fileNameOriginal: true,
-        storagePath: true,
-        versionNumber: true,
-        uploadedAt: true,
-        uploadedByUser: { select: { fullName: true } },
+      include: {
+        uploadedByUser: { select: { id: true, fullName: true } },
       },
     });
 
+    // ارجع بيانات جاهزة للواجهة
     return {
-      ...rec,
-      id: rec.id.toString(),
-      url: `/uploads/${rec.storagePath}`, // يقدَّم من ServeStatic
+      id: saved.id.toString(),
+      originalName: saved.fileNameOriginal,
+      version: saved.versionNumber,
+      uploadedAt: saved.uploadedAt,
+      uploadedBy: saved.uploadedByUser?.fullName ?? null,
+      url: `/uploads/${saved.storagePath}`, // ServeStatic يقدّمها
+      sizeBytes: Number(saved.fileSizeBytes ?? 0),
+      ext: saved.fileExtension,
+      checksum: saved.checksumHash,
+      isLatest: saved.isLatestVersion,
     };
   }
+
+  /**
+   * (اختياري) إرجاع قائمة الملفات لوثيقة — مفيد للواجهة
+   */
+  async listDocumentFiles(documentId: string) {
+    const docIdBig = this.toBigIntId(documentId);
+    const files = await this.prisma.documentFile.findMany({
+      where: { documentId: docIdBig },
+      orderBy: [{ versionNumber: 'desc' }, { uploadedAt: 'desc' }],
+      include: {
+        uploadedByUser: { select: { id: true, fullName: true } },
+      },
+    });
+    return files.map((f) => ({
+      id: f.id.toString(),
+      originalName: f.fileNameOriginal,
+      url: `/uploads/${f.storagePath}`,
+      version: f.versionNumber,
+      uploadedAt: f.uploadedAt,
+      uploadedBy: f.uploadedByUser?.fullName ?? null,
+      isLatest: f.isLatestVersion,
+      ext: f.fileExtension,
+      sizeBytes: Number(f.fileSizeBytes ?? 0),
+      checksum: f.checksumHash,
+    }));
+  }
 }
-
-
-
-
-// import { Injectable, BadRequestException } from '@nestjs/common';
-// import { PrismaService } from 'src/prisma/prisma.service';
-// import * as path from 'path';
-// import * as fs from 'fs';
-
-// @Injectable()
-// export class FilesService {
-//   constructor(private prisma: PrismaService) {}
-
-//   /**
-//    * تسجّل metadata للملف المرفوع في جدول DocumentFile
-//    */
-//   async attachFileToDocument(params: {
-//     documentId: bigint;
-//     uploadedByUserId: number;
-//     originalName: string;
-//     storedPath: string;
-//     sizeBytes: number;
-//   }) {
-//     const { documentId, uploadedByUserId, originalName, storedPath, sizeBytes } =
-//       params;
-
-//     // استخراج الامتداد
-//     const ext = path.extname(originalName || '').replace('.', '').toLowerCase();
-
-//     // ممكن لاحقاً نحسب checksumHash (md5/sha256). الآن نحط placeholder.
-//     const checksum = 'pending-checksum';
-
-//     // رقم الإصدار: نجلب آخر إصدار +1
-//     const lastFile = await this.prisma.documentFile.findFirst({
-//       where: {
-//         documentId: documentId,
-//       },
-//       orderBy: {
-//         versionNumber: 'desc',
-//       },
-//       select: {
-//         versionNumber: true,
-//       },
-//     });
-
-//     const nextVersion = lastFile ? lastFile.versionNumber + 1 : 1;
-
-//     const created = await this.prisma.documentFile.create({
-//       data: {
-//         document: {
-//           connect: { id: documentId },
-//         },
-//         fileNameOriginal: originalName,
-//         storagePath: storedPath,
-//         fileExtension: ext || 'bin',
-//         fileSizeBytes: BigInt(sizeBytes),
-//         checksumHash: checksum,
-//         versionNumber: nextVersion,
-//         isLatestVersion: true,
-//         uploadedByUser: {
-//           connect: { id: uploadedByUserId },
-//         },
-//       },
-//       select: {
-//         id: true, // BigInt
-//         fileNameOriginal: true,
-//         storagePath: true,
-//         versionNumber: true,
-//         uploadedAt: true,
-//       },
-//     });
-
-//     // علشان نمنع BigInt crash، نحول id إلى string
-//     return {
-//       id: created.id.toString(),
-//       fileNameOriginal: created.fileNameOriginal,
-//       storagePath: created.storagePath,
-//       versionNumber: created.versionNumber,
-//       uploadedAt: created.uploadedAt,
-//     };
-//   }
-
-//   /**
-//    * خيار إضافي للتنزيل لاحقاً (مش هنستخدمه الآن لكن نحضّر له)
-//    */
-//   async getFileInfo(fileId: string) {
-//     const file = await this.prisma.documentFile.findUnique({
-//       where: { id: BigInt(fileId) },
-//       select: {
-//         id: true,
-//         fileNameOriginal: true,
-//         storagePath: true,
-//         fileExtension: true,
-//         fileSizeBytes: true,
-//       },
-//     });
-
-//     if (!file) {
-//       throw new BadRequestException('الملف غير موجود');
-//     }
-
-//     return {
-//       id: file.id.toString(),
-//       fileNameOriginal: file.fileNameOriginal,
-//       storagePath: file.storagePath,
-//       fileExtension: file.fileExtension,
-//       fileSizeBytes: file.fileSizeBytes.toString(),
-//     };
-//   }
-
-//   /**
-//    * هل يوجد مرفق لأي documentId؟
-//    */
-//   async hasAttachment(documentId: bigint) {
-//     const count = await this.prisma.documentFile.count({
-//       where: {
-//         documentId: documentId,
-//       },
-//     });
-
-//     return count > 0;
-//   }
-// }
