@@ -1,4 +1,3 @@
-// src/files/files.controller.ts
 import {
   BadRequestException,
   Controller,
@@ -9,11 +8,14 @@ import {
   UseInterceptors,
   Req,
   Get,
+  Res,
 } from '@nestjs/common';
 import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
+import type { Response } from 'express';
+
 import { FilesService } from './files.service';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 
@@ -58,15 +60,9 @@ export class FilesController {
     return { ok: true, msg: 'files service up' };
   }
 
+  // ✅ رفع مرفقات (Alias لمسارين: incoming/:documentId و upload/:documentId)
   @UseGuards(JwtAuthGuard)
-  @Get('by-document/:documentId')
-  async byDocument(@Param('documentId') documentId: string) {
-    return this.filesService.listByDocument(documentId);
-  }
-
-  // ✅ رفع مرفق لوثيقة (يقبل أي اسم حقل) + محمي بالتوكن
-  @UseGuards(JwtAuthGuard)
-  @Post(['incoming/:documentId', 'upload/:documentId']) // alias لمسارك الحالي
+  @Post(['incoming/:documentId', 'upload/:documentId'])
   @UseInterceptors(
     AnyFilesInterceptor({
       storage: tmpStorage(),
@@ -84,8 +80,7 @@ export class FilesController {
       userPayload.userId ?? userPayload.id ?? userPayload.sub ?? null;
 
     if (!userId) throw new BadRequestException('لا يمكن تحديد المستخدم من التوكن');
-    if (!files || files.length === 0)
-      throw new BadRequestException('يرجى اختيار ملف');
+    if (!files || files.length === 0) throw new BadRequestException('يرجى اختيار ملف');
 
     const file = files[0];
 
@@ -103,7 +98,6 @@ export class FilesController {
     const saved = await this.filesService.attachFileToDocument({
       documentId,
       originalName: file.originalname,
-      // ❌ لا نرسل mimetype للخدمة لأن التوقيع لا يستقبله
       tempPath: file.path,
       sizeBytes: file.size,
       uploadedByUserId: userId,
@@ -111,13 +105,66 @@ export class FilesController {
 
     return { ok: true, file: saved, message: 'تم رفع المرفق بنجاح' };
   }
+
+  // ✅ قائمة مرفقات وثيقة (مع التحقق من الصلاحية)
+  @UseGuards(JwtAuthGuard)
+  @Get('by-document/:documentId')
+  async byDocument(@Param('documentId') documentId: string, @Req() req: any) {
+    const ctx = {
+      departmentId: req?.user?.departmentId ?? null,
+      roles: Array.isArray(req?.user?.roles) ? req.user.roles : [],
+    };
+    return this.filesService.listByDocument(documentId, ctx);
+  }
+
+  // ✅ تنزيل ملف (المسار المتوافق مع الواجهة: /files/:fileId/download)
+  @UseGuards(JwtAuthGuard)
+  @Get(':fileId/download')
+  async downloadA(
+    @Param('fileId') fileId: string,
+    @Req() req: any,
+    @Res() res: Response,
+  ) {
+    const ctx = {
+      departmentId: req?.user?.departmentId ?? null,
+      roles: Array.isArray(req?.user?.roles) ? req.user.roles : [],
+    };
+    const f = await this.filesService.getFileForDownload(fileId, ctx);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${encodeURIComponent(f.fileNameOriginal)}"`,
+    );
+    return res.sendFile(f.absPath);
+  }
+
+  // ✅ تنزيل ملف (مسار بديل: /files/download/:fileId) — اختياري للتوافق الخلفي
+  @UseGuards(JwtAuthGuard)
+  @Get('download/:fileId')
+  async downloadB(
+    @Param('fileId') fileId: string,
+    @Req() req: any,
+    @Res() res: Response,
+  ) {
+    const ctx = {
+      departmentId: req?.user?.departmentId ?? null,
+      roles: Array.isArray(req?.user?.roles) ? req.user.roles : [],
+    };
+    const f = await this.filesService.getFileForDownload(fileId, ctx);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${encodeURIComponent(f.fileNameOriginal)}"`,
+    );
+    return res.sendFile(f.absPath);
+  }
 }
 
 
 
 
 
-
+// // src/files/files.controller.ts
 // import {
 //   BadRequestException,
 //   Controller,
@@ -128,9 +175,6 @@ export class FilesController {
 //   UseInterceptors,
 //   Req,
 //   Get,
-//   Delete,
-//   Patch,
-//   Body,
 // } from '@nestjs/common';
 // import { AnyFilesInterceptor } from '@nestjs/platform-express';
 // import { diskStorage } from 'multer';
@@ -174,19 +218,26 @@ export class FilesController {
 // export class FilesController {
 //   constructor(private filesService: FilesService) {}
 
+//   // ✅ اختبار سريع – بدون حارس
 //   @Get('ping')
 //   ping() {
 //     return { ok: true, msg: 'files service up' };
 //   }
 
-//   // رفع (ملف واحد أو عدة ملفات) - لقبول أي اسم حقل
 //   @UseGuards(JwtAuthGuard)
-//   @Post(['incoming/:documentId', 'upload/:documentId'])
+//   @Get('by-document/:documentId')
+//   async byDocument(@Param('documentId') documentId: string) {
+//     return this.filesService.listByDocument(documentId);
+//   }
+
+//   // ✅ رفع مرفق لوثيقة (يقبل أي اسم حقل) + محمي بالتوكن
+//   @UseGuards(JwtAuthGuard)
+//   @Post(['incoming/:documentId', 'upload/:documentId']) // alias لمسارك الحالي
 //   @UseInterceptors(
 //     AnyFilesInterceptor({
 //       storage: tmpStorage(),
 //       fileFilter: FILE_FILTER,
-//       limits: { fileSize: 50 * 1024 * 1024 },
+//       limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
 //     }),
 //   )
 //   async uploadIncomingFile(
@@ -195,51 +246,36 @@ export class FilesController {
 //     @Req() req: any,
 //   ) {
 //     const userPayload = req.user || {};
-//     const userId = userPayload.userId ?? userPayload.id ?? userPayload.sub ?? null;
+//     const userId =
+//       userPayload.userId ?? userPayload.id ?? userPayload.sub ?? null;
+
 //     if (!userId) throw new BadRequestException('لا يمكن تحديد المستخدم من التوكن');
-//     if (!files || files.length === 0) throw new BadRequestException('يرجى اختيار ملف');
+//     if (!files || files.length === 0)
+//       throw new BadRequestException('يرجى اختيار ملف');
 
-//     const saved = [];
-//     for (const file of files) {
-//       const one = await this.filesService.attachFileToDocument({
-//         documentId,
-//         originalName: file.originalname,
-//         mimetype: file.mimetype,
-//         tempPath: file.path,
-//         sizeBytes: file.size,
-//         uploadedByUserId: userId,
-//       });
-//       saved.push(one);
-//     }
-//     return { ok: true, files: saved, message: 'تم رفع المرفق/المرفقات بنجاح' };
-//   }
+//     const file = files[0];
 
-//   // قائمة مرفقات وثيقة
-//   @UseGuards(JwtAuthGuard)
-//   @Get('documents/:documentId')
-//   async listDocumentFiles(@Param('documentId') documentId: string) {
-//     return this.filesService.getFilesForDocument(documentId);
-//   }
+//     // Log تشخيصي بالسيرفر
+//     console.log('[UPLOAD-INCOMING]', {
+//       documentId,
+//       userId,
+//       fieldname: file.fieldname,
+//       originalname: file.originalname,
+//       mimetype: file.mimetype,
+//       size: file.size,
+//       path: file.path,
+//     });
 
-//   // إعادة تسمية
-//   @UseGuards(JwtAuthGuard)
-//   @Patch(':fileId')
-//   async renameFile(
-//     @Param('fileId') fileId: string,
-//     @Body() body: { fileNameOriginal: string },
-//   ) {
-//     if (!body?.fileNameOriginal?.trim()) {
-//       throw new BadRequestException('الاسم الجديد مطلوب');
-//     }
-//     return this.filesService.renameFile(fileId, body.fileNameOriginal.trim());
-//   }
+//     const saved = await this.filesService.attachFileToDocument({
+//       documentId,
+//       originalName: file.originalname,
+//       // ❌ لا نرسل mimetype للخدمة لأن التوقيع لا يستقبله
+//       tempPath: file.path,
+//       sizeBytes: file.size,
+//       uploadedByUserId: userId,
+//     });
 
-//   // حذف
-//   @UseGuards(JwtAuthGuard)
-//   @Delete(':fileId')
-//   async deleteFile(@Param('fileId') fileId: string) {
-//     await this.filesService.deleteFile(fileId);
-//     return { ok: true };
+//     return { ok: true, file: saved, message: 'تم رفع المرفق بنجاح' };
 //   }
 // }
 
