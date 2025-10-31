@@ -58,6 +58,12 @@ export class FilesController {
     return { ok: true, msg: 'files service up' };
   }
 
+  @UseGuards(JwtAuthGuard)
+  @Get('by-document/:documentId')
+  async byDocument(@Param('documentId') documentId: string) {
+    return this.filesService.listByDocument(documentId);
+  }
+
   // ✅ رفع مرفق لوثيقة (يقبل أي اسم حقل) + محمي بالتوكن
   @UseGuards(JwtAuthGuard)
   @Post(['incoming/:documentId', 'upload/:documentId']) // alias لمسارك الحالي

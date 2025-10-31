@@ -3,58 +3,61 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { PrismaService } from 'src/prisma/prisma.service';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
-import * as fscb from 'node:fs';
-import { createHash } from 'node:crypto';
-
-type AttachInput = {
-  documentId: string | number;
-  originalName: string;
-  tempPath: string;           // مسار الملف المؤقت في uploads/_tmp
-  sizeBytes: number;          // حجم الملف بالبايت
-  uploadedByUserId: number;   // من التوكن
-};
+import * as crypto from 'node:crypto';
 
 @Injectable()
 export class FilesService {
   constructor(private prisma: PrismaService) {}
 
-  /**
-   * حساب SHA-256 لملف بدون تحميله للذاكرة كاملة إن أمكن
-   */
-  private async sha256File(filePath: string): Promise<string> {
-    return new Promise<string>((resolve, reject) => {
-      const hash = createHash('sha256');
-      const stream = fscb.createReadStream(filePath);
-      stream.on('error', reject);
-      stream.on('data', (chunk) => hash.update(chunk));
-      stream.on('end', () => resolve(hash.digest('hex')));
-    });
+  private uploadsRoot() {
+    return path.join(process.cwd(), 'uploads');
   }
 
-  private sanitizeFileName(name: string) {
-    // إزالة محارف مزعجة للمسارات
-    return name.replace(/[^a-zA-Z0-9_\-\.أ-ي\s]/g, '').replace(/\s+/g, '_').slice(0, 120);
+  private docFolder(documentId: string | number | bigint) {
+    return path.join(this.uploadsRoot(), 'docs', String(documentId));
+  }
+
+  private extOf(originalName: string) {
+    const ext = path.extname(originalName || '').replace('.', '').toLowerCase();
+    return ext || 'bin';
+  }
+
+  private async moveIntoDocFolder(tempPath: string, documentId: string | number | bigint, originalName: string) {
+    const folder = this.docFolder(documentId);
+    await fs.mkdir(folder, { recursive: true });
+
+    // اسم نهائي آمن
+    const stamp = Date.now();
+    const safeName = originalName?.replace(/[^\p{L}\p{N}\.\-\s_]/gu, '_') || 'file';
+    const finalName = `${stamp}_${safeName}`;
+    const finalAbs = path.join(folder, finalName);
+
+    await fs.rename(tempPath, finalAbs);
+
+    // هذا المسار يُخزن في DB ويستخدم على المتصفح: /uploads/<storagePath>
+    const storagePath = path.join('docs', String(documentId), finalName).replace(/\\/g, '/');
+    return { storagePath, finalAbs };
+  }
+
+  private async fileChecksum(absPath: string) {
+    const hash = crypto.createHash('sha256');
+    const f = await fs.readFile(absPath);
+    hash.update(f);
+    return hash.digest('hex');
   }
 
   /**
-   * يضمن وجود مجلد الوجهة
+   * يحفظ الملف فعليًا، ويُنشئ سجل DB مرتبطًا بالوثيقة.
+   * مخرجاته تحتوي على البيانات الضرورية لعرض المرفقات.
    */
-  private async ensureDir(dir: string) {
-    await fs.mkdir(dir, { recursive: true });
-  }
-
-  /**
-   * إرفاق ملف إلى وثيقة (Document)
-   * - ينقل الملف من uploads/_tmp إلى uploads/docs/<documentId>/...
-   * - يحدد رقم الإصدار التالي
-   * - يحدّث isLatestVersion للقديم = false
-   * - يحفظ سجل DocumentFile جديد isLatestVersion = true
-   */
-  async attachFileToDocument(input: AttachInput) {
-    // 0) تحققات أساسية
-    if (!input.documentId) {
-      throw new BadRequestException('documentId مفقود');
-    }
+  async attachFileToDocument(input: {
+    documentId: string | number;         // قادم من الواجهة
+    originalName: string;                // file.originalname
+    tempPath: string;                    // file.path (المسار المؤقت)
+    sizeBytes: number;                   // file.size
+    uploadedByUserId: number;            // من التوكن
+  }) {
+    // تحقّق الوثيقة
     const docIdBig = BigInt(input.documentId);
     const doc = await this.prisma.document.findUnique({
       where: { id: docIdBig },
@@ -63,59 +66,40 @@ export class FilesService {
     if (!doc) {
       throw new NotFoundException('الوثيقة غير موجودة');
     }
-    // تأكد من أن الملف المؤقت موجود
-    try {
-      await fs.access(input.tempPath);
-    } catch {
-      throw new BadRequestException('الملف المؤقت غير موجود على الخادم');
-    }
 
-    // 1) تجهيز اسم ومسار الوجهة
-    const uploadsRoot = path.join(process.cwd(), 'uploads');           // يقدمه ServeStaticModule
-    const docDir = path.join(uploadsRoot, 'docs', String(docIdBig));   // uploads/docs/<documentId>
-    await this.ensureDir(docDir);
+    // انقل الملف إلى مجلد الوثيقة
+    const { storagePath, finalAbs } = await this.moveIntoDocFolder(
+      input.tempPath,
+      docIdBig,
+      input.originalName || 'file'
+    );
 
-    const originalSanitized = this.sanitizeFileName(input.originalName || 'file');
-    const ext = path.extname(originalSanitized) || '';
-    const baseNoExt = path.basename(originalSanitized, ext);
-    const stamp = Date.now();
-    const finalBase = `${stamp}_${baseNoExt}${ext || ''}`;
-    const finalAbsPath = path.join(docDir, finalBase);
+    // احسب البصمة
+    const checksum = await this.fileChecksum(finalAbs);
 
-    // 2) حساب SHA-256
-    const checksum = await this.sha256File(input.tempPath);
-
-    // 3) رقم الإصدار التالي
-    const latest = await this.prisma.documentFile.findFirst({
+    // حدّد رقم الإصدار التالي، وأطفئ "الأحدث" عن الإصدارات السابقة
+    const last = await this.prisma.documentFile.findFirst({
       where: { documentId: docIdBig },
-      orderBy: [{ versionNumber: 'desc' }],
-      select: { id: true, versionNumber: true, isLatestVersion: true },
+      orderBy: { versionNumber: 'desc' },
+      select: { id: true, versionNumber: true },
     });
-    const nextVersion = latest ? (latest.versionNumber + 1) : 1;
 
-    // 4) نقل الملف من _tmp إلى docs/<documentId>/...
-    await fs.rename(input.tempPath, finalAbsPath);
+    const nextVersion = (last?.versionNumber ?? 0) + 1;
 
-    // 5) تحويل المسار النسبي الذي سيُستخدم عبر /uploads
-    // مثال: storagePath = "docs/2/1730000000_myFile.pdf"
-    const storageRelative = path.join('docs', String(docIdBig), finalBase).replace(/\\/g, '/');
+    // أوقف "الأحدث" عن الكل
+    await this.prisma.documentFile.updateMany({
+      where: { documentId: docIdBig, isLatestVersion: true },
+      data: { isLatestVersion: false },
+    });
 
-    // 6) تحديث الإصدارات القديمة: isLatestVersion = false
-    if (latest?.isLatestVersion) {
-      await this.prisma.documentFile.updateMany({
-        where: { documentId: docIdBig, isLatestVersion: true },
-        data: { isLatestVersion: false },
-      });
-    }
-
-    // 7) إنشاء سجل الملف الجديد (isLatestVersion = true)
+    // خزّن السجل الجديد
     const saved = await this.prisma.documentFile.create({
       data: {
         documentId: docIdBig,
         fileNameOriginal: input.originalName,
-        storagePath: storageRelative,
-        fileExtension: (ext || '').replace('.', '').toLowerCase(),
-        fileSizeBytes: BigInt(input.sizeBytes || 0),
+        storagePath,                         // مثال: docs/2/1730_name.pdf
+        fileExtension: this.extOf(input.originalName),
+        fileSizeBytes: BigInt(input.sizeBytes),
         checksumHash: checksum,
         versionNumber: nextVersion,
         isLatestVersion: true,
@@ -123,27 +107,192 @@ export class FilesService {
         uploadedByUserId: input.uploadedByUserId,
       },
       include: {
-        uploadedByUser: {
-          select: { id: true, fullName: true },
-        },
+        uploadedByUser: { select: { id: true, fullName: true } },
       },
     });
 
-    // 8) نعيد نتيجة مناسبة للواجهة
     return {
       id: saved.id.toString(),
       fileNameOriginal: saved.fileNameOriginal,
+      storagePath: saved.storagePath,              // للعرض: /uploads/<storagePath>
       versionNumber: saved.versionNumber,
-      isLatestVersion: saved.isLatestVersion,
       uploadedAt: saved.uploadedAt,
       uploadedBy: saved.uploadedByUser?.fullName ?? null,
-      url: `/uploads/${saved.storagePath}`, // مثل: http://localhost:3000/uploads/docs/2/<file>
-      sizeBytes: Number(saved.fileSizeBytes),
-      ext: saved.fileExtension,
-      checksum: saved.checksumHash,
     };
   }
+
+  /**
+   * تشخيص/مساعدة: جلب ملفات وثيقة
+   */
+  async listByDocument(documentId: string | number) {
+    const docIdBig = BigInt(documentId);
+    const files = await this.prisma.documentFile.findMany({
+      where: { documentId: docIdBig },
+      orderBy: [{ versionNumber: 'desc' }, { uploadedAt: 'desc' }],
+      include: {
+        uploadedByUser: { select: { fullName: true } },
+      },
+    });
+    return files.map((f) => ({
+      id: f.id.toString(),
+      fileNameOriginal: f.fileNameOriginal,
+      storagePath: f.storagePath,
+      versionNumber: f.versionNumber,
+      uploadedAt: f.uploadedAt,
+      uploadedBy: f.uploadedByUser?.fullName ?? null,
+    }));
+  }
 }
+
+
+
+
+// // src/files/files.service.ts
+// import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+// import { PrismaService } from 'src/prisma/prisma.service';
+// import * as path from 'node:path';
+// import * as fs from 'node:fs/promises';
+// import * as fscb from 'node:fs';
+// import { createHash } from 'node:crypto';
+
+// type AttachInput = {
+//   documentId: string | number;
+//   originalName: string;
+//   tempPath: string;           // مسار الملف المؤقت في uploads/_tmp
+//   sizeBytes: number;          // حجم الملف بالبايت
+//   uploadedByUserId: number;   // من التوكن
+// };
+
+// @Injectable()
+// export class FilesService {
+//   constructor(private prisma: PrismaService) {}
+
+//   /**
+//    * حساب SHA-256 لملف بدون تحميله للذاكرة كاملة إن أمكن
+//    */
+//   private async sha256File(filePath: string): Promise<string> {
+//     return new Promise<string>((resolve, reject) => {
+//       const hash = createHash('sha256');
+//       const stream = fscb.createReadStream(filePath);
+//       stream.on('error', reject);
+//       stream.on('data', (chunk) => hash.update(chunk));
+//       stream.on('end', () => resolve(hash.digest('hex')));
+//     });
+//   }
+
+//   private sanitizeFileName(name: string) {
+//     // إزالة محارف مزعجة للمسارات
+//     return name.replace(/[^a-zA-Z0-9_\-\.أ-ي\s]/g, '').replace(/\s+/g, '_').slice(0, 120);
+//   }
+
+//   /**
+//    * يضمن وجود مجلد الوجهة
+//    */
+//   private async ensureDir(dir: string) {
+//     await fs.mkdir(dir, { recursive: true });
+//   }
+
+//   /**
+//    * إرفاق ملف إلى وثيقة (Document)
+//    * - ينقل الملف من uploads/_tmp إلى uploads/docs/<documentId>/...
+//    * - يحدد رقم الإصدار التالي
+//    * - يحدّث isLatestVersion للقديم = false
+//    * - يحفظ سجل DocumentFile جديد isLatestVersion = true
+//    */
+//   async attachFileToDocument(input: AttachInput) {
+//     // 0) تحققات أساسية
+//     if (!input.documentId) {
+//       throw new BadRequestException('documentId مفقود');
+//     }
+//     const docIdBig = BigInt(input.documentId);
+//     const doc = await this.prisma.document.findUnique({
+//       where: { id: docIdBig },
+//       select: { id: true },
+//     });
+//     if (!doc) {
+//       throw new NotFoundException('الوثيقة غير موجودة');
+//     }
+//     // تأكد من أن الملف المؤقت موجود
+//     try {
+//       await fs.access(input.tempPath);
+//     } catch {
+//       throw new BadRequestException('الملف المؤقت غير موجود على الخادم');
+//     }
+
+//     // 1) تجهيز اسم ومسار الوجهة
+//     const uploadsRoot = path.join(process.cwd(), 'uploads');           // يقدمه ServeStaticModule
+//     const docDir = path.join(uploadsRoot, 'docs', String(docIdBig));   // uploads/docs/<documentId>
+//     await this.ensureDir(docDir);
+
+//     const originalSanitized = this.sanitizeFileName(input.originalName || 'file');
+//     const ext = path.extname(originalSanitized) || '';
+//     const baseNoExt = path.basename(originalSanitized, ext);
+//     const stamp = Date.now();
+//     const finalBase = `${stamp}_${baseNoExt}${ext || ''}`;
+//     const finalAbsPath = path.join(docDir, finalBase);
+
+//     // 2) حساب SHA-256
+//     const checksum = await this.sha256File(input.tempPath);
+
+//     // 3) رقم الإصدار التالي
+//     const latest = await this.prisma.documentFile.findFirst({
+//       where: { documentId: docIdBig },
+//       orderBy: [{ versionNumber: 'desc' }],
+//       select: { id: true, versionNumber: true, isLatestVersion: true },
+//     });
+//     const nextVersion = latest ? (latest.versionNumber + 1) : 1;
+
+//     // 4) نقل الملف من _tmp إلى docs/<documentId>/...
+//     await fs.rename(input.tempPath, finalAbsPath);
+
+//     // 5) تحويل المسار النسبي الذي سيُستخدم عبر /uploads
+//     // مثال: storagePath = "docs/2/1730000000_myFile.pdf"
+//     const storageRelative = path.join('docs', String(docIdBig), finalBase).replace(/\\/g, '/');
+
+//     // 6) تحديث الإصدارات القديمة: isLatestVersion = false
+//     if (latest?.isLatestVersion) {
+//       await this.prisma.documentFile.updateMany({
+//         where: { documentId: docIdBig, isLatestVersion: true },
+//         data: { isLatestVersion: false },
+//       });
+//     }
+
+//     // 7) إنشاء سجل الملف الجديد (isLatestVersion = true)
+//     const saved = await this.prisma.documentFile.create({
+//       data: {
+//         documentId: docIdBig,
+//         fileNameOriginal: input.originalName,
+//         storagePath: storageRelative,
+//         fileExtension: (ext || '').replace('.', '').toLowerCase(),
+//         fileSizeBytes: BigInt(input.sizeBytes || 0),
+//         checksumHash: checksum,
+//         versionNumber: nextVersion,
+//         isLatestVersion: true,
+//         uploadedAt: new Date(),
+//         uploadedByUserId: input.uploadedByUserId,
+//       },
+//       include: {
+//         uploadedByUser: {
+//           select: { id: true, fullName: true },
+//         },
+//       },
+//     });
+
+//     // 8) نعيد نتيجة مناسبة للواجهة
+//     return {
+//       id: saved.id.toString(),
+//       fileNameOriginal: saved.fileNameOriginal,
+//       versionNumber: saved.versionNumber,
+//       isLatestVersion: saved.isLatestVersion,
+//       uploadedAt: saved.uploadedAt,
+//       uploadedBy: saved.uploadedByUser?.fullName ?? null,
+//       url: `/uploads/${saved.storagePath}`, // مثل: http://localhost:3000/uploads/docs/2/<file>
+//       sizeBytes: Number(saved.fileSizeBytes),
+//       ext: saved.fileExtension,
+//       checksum: saved.checksumHash,
+//     };
+//   }
+// }
 
 
 
