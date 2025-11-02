@@ -417,3 +417,12 @@ model IncomingDistributionLog {
   @@index([createdAt])
   @@index([updatedByUserId])
 }
+
+
+model NumberSequence {
+  id         Int    @id @default(autoincrement())
+  scope      String @unique     // مثال: "INCOMING_2025", "OUTGOING_2025"
+  lastNumber Int    @default(0)
+
+  @@index([scope])
+}

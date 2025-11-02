@@ -1,18 +1,17 @@
+// src/incoming/incoming.module.ts
 import { Module } from '@nestjs/common';
 import { PrismaModule } from 'src/prisma/prisma.module';
 import { IncomingService } from './incoming.service';
 import { IncomingController } from './incoming.controller';
-import { JwtModule } from '@nestjs/jwt';
+import { AuthModule } from 'src/auth/auth.module';
+import { AuditModule } from 'src/audit/audit.module';
 import { IncomingClearanceGuard } from 'src/common/guards/incoming-clearance.guard';
-
 
 @Module({
   imports: [
     PrismaModule,
-    // نحتاج JwtService عشان نفك التوكن ونجيب user.sub
-    JwtModule.register({
-      secret: process.env.JWT_SECRET,
-    }),
+    AuthModule,   // للمصادقة والصلاحيات
+    AuditModule,  // ✅ لتفعيل سجل التدقيق داخل IncomingService
   ],
   providers: [IncomingService, IncomingClearanceGuard],
   controllers: [IncomingController],

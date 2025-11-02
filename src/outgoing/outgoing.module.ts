@@ -1,37 +1,18 @@
+// src/outgoing/outgoing.module.ts
 import { Module } from '@nestjs/common';
 import { OutgoingService } from './outgoing.service';
 import { OutgoingController } from './outgoing.controller';
 import { PrismaModule } from 'src/prisma/prisma.module';
-import { JwtModule } from '@nestjs/jwt';
+import { AuthModule } from 'src/auth/auth.module';
+import { AuditModule } from 'src/audit/audit.module';
 
 @Module({
   imports: [
     PrismaModule,
-    JwtModule.register({
-      secret: process.env.JWT_SECRET,
-    }),
+    AuthModule,   // للمصادقة والصلاحيات
+    AuditModule,  // ✅ لتفعيل سجل التدقيق داخل OutgoingService
   ],
   providers: [OutgoingService],
   controllers: [OutgoingController],
 })
 export class OutgoingModule {}
-
-
-
-// import { Module } from '@nestjs/common';
-// import { OutgoingService } from './outgoing.service';
-// import { OutgoingController } from './outgoing.controller';
-// import { PrismaModule } from 'src/prisma/prisma.module';
-// import { JwtModule } from '@nestjs/jwt';
-
-// @Module({
-//   imports: [
-//     PrismaModule,
-//     JwtModule.register({
-//       secret: process.env.JWT_SECRET,
-//     }),
-//   ],
-//   providers: [OutgoingService],
-//   controllers: [OutgoingController],
-// })
-// export class OutgoingModule {}
