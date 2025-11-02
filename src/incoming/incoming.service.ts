@@ -1,333 +1,1084 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma, DeliveryMethod, DistributionStatus } from '@prisma/client';
+// src/incoming/incoming.service.ts
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { AuthorizationService } from 'src/auth/authorization.service';
-import { AuditService } from 'src/audit/audit.service';
+
+type PageParams = {
+  page: number;
+  pageSize: number;
+  q?: string;
+  from?: string; // YYYY-MM-DD
+  to?: string;   // YYYY-MM-DD
+};
 
 @Injectable()
 export class IncomingService {
-  constructor(
-    private prisma: PrismaService,
-    private authz: AuthorizationService,
-    private audit: AuditService,
-  ) {}
+  constructor(private prisma: PrismaService) {}
 
-  private normalizeDeliveryMethod(x: string): DeliveryMethod {
-    if (!x) return 'Hand';
-    const v = String(x).trim().toLowerCase();
-    if (['hand','يد','باليد'].includes(v)) return 'Hand';
-    if (['mail','بريد'].includes(v)) return 'Mail';
-    if (['email','بريد الكتروني','ايميل'].includes(v)) return 'Email';
-    if (['courier','مندوب','شركة شحن'].includes(v)) return 'Courier';
-    if (['fax','فاكس'].includes(v)) return 'Fax';
-    if (['electronicsystem','منظومة','نظام'].includes(v)) return 'ElectronicSystem';
-    return 'Hand';
+  // =========================
+  // Helpers
+  // =========================
+
+  private likeInsensitive(v: string) {
+    return { contains: v, mode: 'insensitive' as const };
   }
 
-  /** تهيئة ذكية + زيادة ذرّيّة مع دعم إعادة المحاولة */
-  private async generateIncomingNumber(tx: Prisma.TransactionClient, year: number) {
-    const scope = `INCOMING_${year}`;
-    let seq = await tx.numberSequence.findUnique({ where: { scope } });
-    if (!seq) {
-      const prefix = `${year}/`;
-      const existing = await tx.incomingRecord.findMany({
-        where: { incomingNumber: { startsWith: prefix } },
-        select: { incomingNumber: true },
-      });
-      let max = 0;
-      for (const r of existing) {
-        const part = String(r.incomingNumber).split('/')[1];
-        const n = Number(part);
-        if (!Number.isNaN(n) && n > max) max = n;
-      }
-      seq = await tx.numberSequence.create({ data: { scope, lastNumber: max } });
+  private buildDateRange(from?: string, to?: string) {
+    const where: Prisma.IncomingRecordWhereInput = {};
+    const rf: Prisma.DateTimeFilter = {};
+
+    if (from) {
+      const d = new Date(from);
+      if (!isNaN(d.getTime())) rf.gte = d;
     }
-    seq = await tx.numberSequence.update({ where: { scope }, data: { lastNumber: { increment: 1 } } });
-    const num = seq.lastNumber;
-    return `${year}/${String(num).padStart(6, '0')}`;
+    if (to) {
+      const d = new Date(to);
+      if (!isNaN(d.getTime())) {
+        d.setHours(23, 59, 59, 999);
+        rf.lte = d;
+      }
+    }
+    if (Object.keys(rf).length > 0) where.receivedDate = rf;
+    return where;
   }
 
-  async listLatestForUser(user: any) {
-    const where = this.authz.buildIncomingWhereClause(user);
-    const result = await this.prisma.incomingRecord.findMany({
-      where,
-      orderBy: { receivedDate: 'desc' },
-      take: 50,
-      select: {
-        id: true,
-        incomingNumber: true,
-        receivedDate: true,
-        externalParty: { select: { name: true } },
-        document: {
-          select: {
-            id: true, title: true,
-            owningDepartment: { select: { id: true, name: true } },
-            _count: { select: { files: true } },
-          },
-        },
-      },
+  private async mapHasFiles<T extends { document?: { id: number | bigint } | null }>(
+    items: T[],
+  ): Promise<(T & { hasFiles: boolean })[]> {
+    const docIds = items
+      .map((it) => it.document?.id)
+      .filter((x): x is number | bigint => !!x);
+
+    if (docIds.length === 0) {
+      return items.map((x) => ({ ...x, hasFiles: false }));
+    }
+
+    const grouped = await this.prisma.documentFile.groupBy({
+      by: ['documentId'],
+      _count: { _all: true },
+      where: { documentId: { in: docIds as any } },
     });
 
-    return result.map(r => ({
-      id: String(r.id),
-      incomingNumber: r.incomingNumber,
-      receivedDate: r.receivedDate,
-      externalPartyName: r.externalParty?.name ?? '—',
-      document: r.document ? {
-        id: String(r.document.id),
-        title: r.document.title,
-        owningDepartment: r.document.owningDepartment,
-        _count: r.document._count,
-      } : null,
-      hasFiles: !!r.document?._count?.files,
-    }));
+    const map = new Map<bigint | number, number>();
+    for (const g of grouped) {
+      // documentId يمكن أن يكون BigInt أو number حسب الـ schema
+      map.set(g.documentId as any, g._count._all);
+    }
+
+    return items.map((x) => {
+      const id = x.document?.id as any;
+      const count = id != null ? (map.get(id) || 0) : 0;
+      return { ...x, hasFiles: count > 0 };
+    });
   }
 
-  async listForDepartment(user: any) {
-    if (!user?.departmentId) return [];
-    const dists = await this.prisma.incomingDistribution.findMany({
-      where: { targetDepartmentId: user.departmentId },
-      orderBy: { createdAt: 'desc' },
-      take: 100,
-      include: {
-        incoming: {
-          select: {
-            id: true,
-            incomingNumber: true,
-            receivedDate: true,
-            externalParty: { select: { name: true } },
-            document: {
-              select: { id: true, title: true, owningDepartment: { select: { id: true, name: true } } },
+  private nowRanges() {
+    const now = new Date();
+
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(now);
+    todayEnd.setHours(23, 59, 59, 999);
+
+    const weekStart = new Date(now);
+    weekStart.setDate(weekStart.getDate() - 6);
+    weekStart.setHours(0, 0, 0, 0);
+
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const monthEnd = todayEnd;
+
+    return { todayStart, todayEnd, weekStart, monthStart, monthEnd };
+  }
+
+  // =========================
+  // Dashboard stats (shape مطابق للـ Frontend)
+  // =========================
+  async statsOverviewForDashboard() {
+    const { todayStart, todayEnd, weekStart, monthStart, monthEnd } =
+      this.nowRanges();
+
+    const [totalAll, totalToday, totalWeek, totalMonth] =
+      await this.prisma.$transaction([
+        this.prisma.incomingRecord.count({}),
+        this.prisma.incomingRecord.count({
+          where: { receivedDate: { gte: todayStart, lte: todayEnd } },
+        }),
+        this.prisma.incomingRecord.count({
+          where: { receivedDate: { gte: weekStart, lte: todayEnd } },
+        }),
+        this.prisma.incomingRecord.count({
+          where: { receivedDate: { gte: monthStart, lte: monthEnd } },
+        }),
+      ]);
+
+    return { totalAll, totalToday, totalWeek, totalMonth };
+  }
+
+  // =========================
+  // Queries
+  // =========================
+
+  /**
+   * تُستخدم في صفحة الوارد: أحدث الوارد مع ترقيم بسيط
+   * ويشمل externalParty/document + hasFiles.
+   */
+  async getLatestIncoming(page: number, pageSize: number) {
+    const skip = (page - 1) * pageSize;
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.incomingRecord.findMany({
+        select: {
+          id: true,
+          incomingNumber: true,
+          receivedDate: true,
+          externalParty: { select: { name: true } },
+          document: {
+            select: {
+              id: true,
+              title: true,
+              files: {
+                where: { isLatestVersion: true },
+                select: { id: true },
+                take: 1,
+              },
             },
           },
         },
-      },
-    });
+        orderBy: [{ receivedDate: 'desc' }],
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.incomingRecord.count(),
+    ]);
 
-    return dists.map(d => ({
-      id: String(d.incoming.id),
-      status: d.status,
-      incomingNumber: d.incoming.incomingNumber,
-      receivedDate: d.incoming.receivedDate,
-      externalPartyName: d.incoming.externalParty?.name ?? '—',
-      document: d.incoming.document ? {
-        id: String(d.incoming.document.id),
-        title: d.incoming.document.title,
-        owningDepartment: d.incoming.document.owningDepartment,
-      } : null,
-    }));
+    const withFiles = await this.mapHasFiles(
+      items.map((r) => ({
+        id: String(r.id),
+        incomingNumber: r.incomingNumber,
+        receivedDate: r.receivedDate,
+        externalPartyName: r.externalParty?.name ?? '—',
+        document: r.document,
+      })),
+    );
+
+    return {
+      items: withFiles,
+      total,
+      page,
+      pageSize,
+    };
   }
 
-  async getOneForUser(id: string, user: any) {
-    let incomingId: bigint;
-    try { incomingId = BigInt(id); } catch { throw new BadRequestException('Invalid ID'); }
+  /**
+   * «على طاولتي»
+   */
+  async myDesk(user: any, params: PageParams) {
+    const { page, pageSize, q, from, to } = params;
+    const skip = (page - 1) * pageSize;
 
-    const where = this.authz.buildIncomingWhereClause(user);
-    const rec = await this.prisma.incomingRecord.findFirst({
-      where: { ...where, id: incomingId },
+    const dateWhere = this.buildDateRange(from, to);
+    const textWhere: Prisma.IncomingRecordWhereInput = q
+      ? {
+          OR: [
+            { incomingNumber: this.likeInsensitive(q) },
+            { document: { title: this.likeInsensitive(q) } },
+            { externalParty: { name: this.likeInsensitive(q) } },
+          ],
+        }
+      : {};
+
+    const whereDist: Prisma.IncomingDistributionWhereInput = {
+      OR: [
+        { assignedToUserId: user?.id || 0 },
+        { targetDepartmentId: user?.departmentId || 0 },
+      ],
+      incoming: { AND: [dateWhere, textWhere] },
+    };
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.incomingDistribution.findMany({
+        where: whereDist,
+        select: {
+          id: true,
+          status: true,
+          lastUpdateAt: true,
+          incomingId: true,
+          incoming: {
+            select: {
+              id: true,
+              incomingNumber: true,
+              receivedDate: true,
+              externalParty: { select: { name: true } },
+              document: { select: { id: true, title: true } },
+            },
+          },
+        },
+        orderBy: [{ lastUpdateAt: 'desc' }],
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.incomingDistribution.count({ where: whereDist }),
+    ]);
+
+    const base = items.map((d) => ({
+      id: String(d.id),
+      distributionId: String(d.id),
+      status: d.status,
+      lastUpdateAt: d.lastUpdateAt,
+      incomingId: String(d.incomingId),
+      incomingNumber: d.incoming?.incomingNumber,
+      receivedDate: d.incoming?.receivedDate,
+      externalPartyName: d.incoming?.externalParty?.name ?? '—',
+      document: d.incoming?.document || null,
+    }));
+
+    const withFiles = await this.mapHasFiles(base);
+
+    return {
+      page,
+      pageSize,
+      total,
+      pages: Math.max(1, Math.ceil(total / pageSize)),
+      rows: withFiles,
+    };
+  }
+
+  /**
+   * بحث عام
+   */
+  async search(params: PageParams) {
+    const { page, pageSize, q, from, to } = params;
+    const skip = (page - 1) * pageSize;
+
+    const dateWhere = this.buildDateRange(from, to);
+    const textWhere: Prisma.IncomingRecordWhereInput = q
+      ? {
+          OR: [
+            { incomingNumber: this.likeInsensitive(q) },
+            { document: { title: this.likeInsensitive(q) } },
+            { externalParty: { name: this.likeInsensitive(q) } },
+          ],
+        }
+      : {};
+
+    const where: Prisma.IncomingRecordWhereInput = { AND: [dateWhere, textWhere] };
+
+    const [items, total] = await this.prisma.$transaction([
+      this.prisma.incomingRecord.findMany({
+        where,
+        select: {
+          id: true,
+          incomingNumber: true,
+          receivedDate: true,
+          externalParty: { select: { name: true } },
+          document: { select: { id: true, title: true } },
+        },
+        orderBy: [{ receivedDate: 'desc' }],
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.incomingRecord.count({ where }),
+    ]);
+
+    const withFiles = await this.mapHasFiles(
+      items.map((r) => ({
+        id: String(r.id),
+        incomingNumber: r.incomingNumber,
+        receivedDate: r.receivedDate,
+        externalPartyName: r.externalParty?.name ?? '—',
+        document: r.document,
+      })),
+    );
+
+    return {
+      page,
+      pageSize,
+      total,
+      pages: Math.max(1, Math.ceil(total / pageSize)),
+      rows: withFiles,
+    };
+  }
+
+  // =========================
+  // Commands
+  // =========================
+
+  /**
+   * يولّد رقم وارد سنويًا مثل 2025/000001
+   */
+  private async generateIncomingNumber(
+    tx: Prisma.TransactionClient,
+    year: number,
+  ) {
+    const prefix = `${year}/`;
+    const count = await tx.incomingRecord.count({
+      where: { incomingNumber: { startsWith: prefix } as any },
+    });
+    const seq = count + 1;
+    return `${prefix}${String(seq).padStart(6, '0')}`;
+  }
+
+  /**
+   * إنشاء وارد سريع
+   */
+  async createIncoming(
+    payload: {
+      documentTitle: string;
+      owningDepartmentId: number;
+      externalPartyName: string;
+      deliveryMethod: string;
+    },
+    user: any,
+  ) {
+    const title = String(payload.documentTitle || '').trim();
+    if (!title) throw new BadRequestException('Invalid title');
+
+    if (!payload.owningDepartmentId || isNaN(Number(payload.owningDepartmentId))) {
+      throw new BadRequestException('Invalid owningDepartmentId');
+    }
+
+    const extName = String(payload.externalPartyName || '').trim();
+    if (!extName) throw new BadRequestException('Invalid externalPartyName');
+
+    const year = new Date().getFullYear();
+
+    return this.prisma.$transaction(async (tx) => {
+      // ExternalParty (بالاسم – case-insensitive)
+      let external = await tx.externalParty.findFirst({
+        where: { name: { equals: extName, mode: 'insensitive' } as any },
+        select: { id: true },
+      });
+      if (!external) {
+        external = await tx.externalParty.create({
+          data: { name: extName, status: 'Active' },
+          select: { id: true },
+        });
+      }
+
+      // وثيقة مسجّلة
+      const document = await tx.document.create({
+        data: {
+          title,
+          currentStatus: 'Registered',
+          documentType: { connect: { id: 1 } },
+          securityLevel: { connect: { id: 1 } },
+          createdByUser: { connect: { id: Number(user?.id) } },
+          owningDepartment: { connect: { id: Number(payload.owningDepartmentId) } },
+        },
+        select: { id: true, title: true },
+      });
+
+      // رقم الوارد
+      const incomingNumber = await this.generateIncomingNumber(tx, year);
+
+      const incoming = await tx.incomingRecord.create({
+        data: {
+          documentId: document.id,
+          externalPartyId: external.id,
+          receivedDate: new Date(),
+          receivedByUserId: Number(user?.id),
+          incomingNumber,
+          deliveryMethod: payload.deliveryMethod as any,
+          urgencyLevel: 'Normal',
+        },
+        select: {
+          id: true,
+          incomingNumber: true,
+          receivedDate: true,
+          document: { select: { id: true, title: true } },
+          externalParty: { select: { name: true } },
+        },
+      });
+
+      // توزيع تلقائي على قسم المنشئ
+      await tx.incomingDistribution.create({
+        data: {
+          incomingId: incoming.id,
+          targetDepartmentId: Number(payload.owningDepartmentId),
+          status: 'Open',
+        },
+      });
+
+      return {
+        id: String(incoming.id),
+        incomingNumber: incoming.incomingNumber,
+        receivedDate: incoming.receivedDate,
+        externalPartyName: incoming.externalParty?.name ?? extName,
+        document: incoming.document,
+      };
+    });
+  }
+
+  /** تفاصيل وارد واحدة */
+  async getOneById(id: string | number) {
+    const incomingId = BigInt(id as any); // because model key is BigInt
+
+    const row = await this.prisma.incomingRecord.findUnique({
+      where: { id: incomingId },
       select: {
         id: true,
         incomingNumber: true,
         receivedDate: true,
         deliveryMethod: true,
-        externalParty: { select: { id: true, name: true, type: true } },
+        urgencyLevel: true,
+        externalParty: { select: { name: true } },
         document: {
           select: {
-            id: true, title: true, summary: true,
-            owningDepartmentId: true,
-            owningDepartment: { select: { id: true, name: true } },
+            id: true,
+            title: true,
+            currentStatus: true,
+            createdAt: true,
+            owningDepartment: { select: { name: true } },
+            // ملفات الوثيقة (أحدث الإصدارات)
             files: {
-              select: { id: true, fileNameOriginal: true, uploadedAt: true, versionNumber: true },
-              orderBy: [{ isLatestVersion: 'desc' }, { versionNumber: 'desc' }],
+              where: { isLatestVersion: true },
+              orderBy: { uploadedAt: 'desc' },
+              select: {
+                id: true,
+                fileNameOriginal: true,
+                fileSizeBytes: true,
+                uploadedAt: true,
+              },
             },
+          },
+        },
+        // إن كانت عندك سجلات توزيع للوارد
+        distributions: {
+          orderBy: { lastUpdateAt: 'desc' },
+          select: {
+            id: true,
+            status: true,
+            lastUpdateAt: true,
+            notes: true,
+            targetDepartment: { select: { name: true } },
+            assignedToUser: { select: { fullName: true } },
           },
         },
       },
     });
-    if (!rec) throw new NotFoundException('العنصر غير موجود أو لا تملك صلاحية الوصول');
 
+    if (!row) {
+      throw new BadRequestException('Invalid incoming id');
+    }
+
+    // تحويل إلى الشكل المتوقع من صفحات التفاصيل
     return {
-      id: String(rec.id),
-      incomingNumber: rec.incomingNumber,
-      receivedDate: rec.receivedDate,
-      deliveryMethod: rec.deliveryMethod,
-      externalParty: rec.externalParty,
-      document: rec.document ? {
-        id: String(rec.document.id),
-        title: rec.document.title,
-        summary: rec.document.summary,
-        owningDepartment: rec.document.owningDepartment,
-      } : null,
-      files: (rec.document?.files ?? []).map(f => ({ ...f, id: String(f.id) })),
+      id: String(row.id),
+      incomingNumber: row.incomingNumber,
+      receivedDate: row.receivedDate,
+      deliveryMethod: row.deliveryMethod,
+      urgencyLevel: row.urgencyLevel ?? null,
+      externalPartyName: row.externalParty?.name ?? '—',
+      document: row.document
+        ? {
+            id: String(row.document.id),
+            title: row.document.title,
+            currentStatus: row.document.currentStatus,
+            createdAt: row.document.createdAt,
+            owningDepartmentName: row.document.owningDepartment?.name ?? '—',
+          }
+        : null,
+      files:
+        row.document?.files?.map((f) => ({
+          id: String(f.id),
+          fileNameOriginal: f.fileNameOriginal,
+          fileSizeBytes: Number(f.fileSizeBytes),
+          uploadedAt: f.uploadedAt,
+        })) ?? [],
+      distributions:
+        row.distributions?.map((d) => ({
+          id: String(d.id),
+          status: d.status,
+          lastUpdateAt: d.lastUpdateAt,
+          notes: d.notes ?? null,
+          targetDepartmentName: d.targetDepartment?.name ?? '—',
+          assignedToUserName: d.assignedToUser?.fullName ?? null,
+        })) ?? [],
     };
   }
-
-  async createIncoming(payload: {
-    documentTitle: string;
-    owningDepartmentId: number;
-    externalPartyName: string;
-    deliveryMethod?: string;
-  }, user: any) {
-    const title = (payload.documentTitle || '').trim();
-    const deptIdNum = Number(payload.owningDepartmentId);
-    if (!title) throw new BadRequestException('العنوان مطلوب');
-    if (!deptIdNum || Number.isNaN(deptIdNum)) throw new BadRequestException('القسم المالِك غير صالح');
-    if (!payload.externalPartyName?.trim()) throw new BadRequestException('الجهة مطلوبة');
-
-    const dm = this.normalizeDeliveryMethod(payload.deliveryMethod ?? 'Hand');
-    const now = new Date();
-    const year = now.getFullYear();
-
-    const dept = await this.prisma.department.findUnique({ where: { id: deptIdNum } });
-    if (!dept) throw new BadRequestException('القسم المالِك غير موجود');
-
-    const ip = (user?.ip as string) || null;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const created = await this.prisma.$transaction(async (tx) => {
-          const docType = await tx.documentType.upsert({
-            where: { typeName: 'Incoming' },
-            update: { isIncomingType: true },
-            create: { typeName: 'Incoming', isIncomingType: true, description: 'Incoming letters' },
-          });
-          const secLevel = await tx.securityLevel.upsert({
-            where: { rankOrder: 0 },
-            update: {},
-            create: { levelName: 'Public', rankOrder: 0 },
-          });
-
-          const incomingNumber = await this.generateIncomingNumber(tx, year);
-
-          let external = await tx.externalParty.findFirst({ where: { name: payload.externalPartyName.trim() } });
-          if (!external) {
-            external = await tx.externalParty.create({ data: { name: payload.externalPartyName.trim(), status: 'Active' } });
-          } else {
-            external = await tx.externalParty.update({
-              where: { id: external.id },
-              data: { status: 'Active', updatedAt: new Date() },
-            });
-          }
-
-          const doc = await tx.document.create({
-            data: {
-              title,
-              documentType: { connect: { id: docType.id } },
-              securityLevel: { connect: { id: secLevel.id } },
-              createdByUser: { connect: { id: user.userId } },
-              owningDepartment: { connect: { id: dept.id } },
-              currentStatus: 'Registered',
-            },
-            select: { id: true, title: true },
-          });
-
-          const incoming = await tx.incomingRecord.create({
-            data: {
-              documentId: doc.id,
-              externalPartyId: external.id,
-              receivedDate: now,
-              receivedByUserId: user.userId,
-              incomingNumber,
-              deliveryMethod: dm,
-            },
-            select: { id: true, incomingNumber: true, documentId: true, receivedDate: true },
-          });
-
-          await this.audit.log({
-            userId: user.userId,
-            documentId: doc.id,
-            actionType: 'INCOMING_CREATED',
-            description: `Incoming ${incomingNumber} created`,
-            fromIP: ip,
-          });
-
-          return { doc, incoming };
-        });
-
-        return {
-          documentId: String(created.doc.id),
-          id: String(created.incoming.id),
-          incomingNumber: created.incoming.incomingNumber,
-          receivedDate: created.incoming.receivedDate,
-        };
-      } catch (e: any) {
-        if (e?.code === 'P2002' && Array.isArray(e?.meta?.target) && e.meta.target.includes('incomingNumber') && attempt < 3) {
-          continue;
-        }
-        throw new BadRequestException(`تعذر إنشاء الوارد: ${e?.message || 'خطأ غير معروف'}`);
-      }
-    }
-    throw new BadRequestException('تعذر إنشاء الوارد بسبب تعارض متكرر على رقم الوارد');
-  }
-
-  async addFollowupStep(incomingId: string, input: {
-    status: DistributionStatus;
-    note?: string;
-    targetDepartmentId?: number;
-    assignedToUserId?: number;
-  }, user: any) {
-    let id: bigint;
-    try { id = BigInt(incomingId); } catch { throw new BadRequestException('Invalid ID'); }
-
-    await this.getOneForUser(String(id), user);
-
-    const dist = await this.prisma.incomingDistribution.create({
-      data: {
-        incomingId: id,
-        targetDepartmentId: input.targetDepartmentId ?? user.departmentId ?? null,
-        assignedToUserId: input.assignedToUserId ?? null,
-        status: input.status ?? 'Open',
-        notes: input.note ?? null,
-      },
-      select: { id: true, status: true, targetDepartmentId: true, assignedToUserId: true, createdAt: true },
-    });
-
-    await this.audit.log({
-      userId: user.userId,
-      documentId: id,
-      actionType: 'INCOMING_DISTRIBUTED',
-      description: `Distribution created (status=${dist.status})`,
-      fromIP: (user?.ip as string) || null,
-    });
-
-    return dist;
-  }
-
-  async updateDistributionStatus(distId: string, status: DistributionStatus, user: any) {
-    let id: bigint;
-    try { id = BigInt(distId); } catch { throw new BadRequestException('Invalid ID'); }
-
-    const dist = await this.prisma.incomingDistribution.findUnique({
-      where: { id },
-      select: { id: true, status: true, incomingId: true },
-    });
-    if (!dist) throw new NotFoundException('غير موجود');
-
-    await this.getOneForUser(String(dist.incomingId), user);
-
-    const updated = await this.prisma.incomingDistribution.update({
-      where: { id },
-      data: { status, lastUpdateAt: new Date() },
-      select: { id: true, status: true, updatedAt: true },
-    });
-
-    await this.audit.log({
-      userId: user.userId,
-      documentId: dist.incomingId,
-      actionType: 'INCOMING_STATUS_CHANGED',
-      description: `Distribution status ${dist.status} -> ${updated.status}`,
-      fromIP: (user?.ip as string) || null,
-    });
-
-    await this.prisma.incomingDistributionLog.create({
-      data: {
-        distributionId: id,
-        oldStatus: dist.status,
-        newStatus: status,
-        updatedByUserId: user.userId,
-        note: `Status changed`,
-      },
-    });
-
-    return updated;
-  }
 }
+
+
+
+
+
+
+// import { BadRequestException, Injectable } from '@nestjs/common';
+// import { Prisma, PrismaClient } from '@prisma/client';
+// import { PrismaService } from 'src/prisma/prisma.service';
+
+// type PageParams = {
+//   page: number;
+//   pageSize: number;
+//   q?: string;
+//   dateFrom?: string; // YYYY-MM-DD
+//   dateTo?: string;   // YYYY-MM-DD
+// };
+
+// @Injectable()
+// export class IncomingService {
+//   constructor(private prisma: PrismaService) {}
+
+//   // ================ Helpers ================
+
+//   private likeInsensitive(v: string) {
+//     return { contains: v, mode: 'insensitive' as const };
+//   }
+
+//   private buildDateFilter(dateFrom?: string, dateTo?: string) {
+//     const rf: Prisma.DateTimeFilter = {};
+//     if (dateFrom) {
+//       const d = new Date(dateFrom);
+//       if (!isNaN(d.getTime())) rf.gte = d;
+//     }
+//     if (dateTo) {
+//       const d = new Date(dateTo);
+//       if (!isNaN(d.getTime())) {
+//         d.setHours(23, 59, 59, 999);
+//         rf.lte = d;
+//       }
+//     }
+//     return rf;
+//   }
+
+//   /**
+//    * داخل transaction — توليد رقم وارد سنويًا: 2025/000001
+//    */
+//   private async generateIncomingNumber(
+//     tx: PrismaClient | Prisma.TransactionClient,
+//     year: number,
+//   ) {
+//     const prefix = `${year}/`;
+//     const count = await tx.incomingRecord.count({
+//       where: { incomingNumber: { startsWith: prefix } as any },
+//     });
+//     const seq = count + 1;
+//     return `${prefix}${String(seq).padStart(6, '0')}`;
+//   }
+
+//   // ================ Queries ================
+
+//   /**
+//    * ترجيع صفحة من الواردات مع فلاتر بسيطة — الشكل متوافق مع IncomingPage.tsx:
+//    * { items: IncomingRow[], total, page, pageSize }
+//    */
+//   async getLatestIncoming(params: PageParams) {
+//     const { page, pageSize, q, dateFrom, dateTo } = params;
+//     const skip = (page - 1) * pageSize;
+
+//     const dateFilter = this.buildDateFilter(dateFrom, dateTo);
+//     const baseWhere: Prisma.IncomingRecordWhereInput = {};
+
+//     if (Object.keys(dateFilter).length) {
+//       baseWhere.receivedDate = dateFilter;
+//     }
+
+//     if (q && q.trim()) {
+//       baseWhere.OR = [
+//         { incomingNumber: this.likeInsensitive(q) },
+//         { document: { title: this.likeInsensitive(q) } },
+//         { externalParty: { name: this.likeInsensitive(q) } },
+//       ];
+//     }
+
+//     const [items, total] = await this.prisma.$transaction([
+//       this.prisma.incomingRecord.findMany({
+//         where: baseWhere,
+//         select: {
+//           id: true,
+//           incomingNumber: true,
+//           receivedDate: true,
+//           document: { select: { id: true, title: true } },
+//           externalParty: { select: { name: true } },
+//         },
+//         orderBy: [{ receivedDate: 'desc' }],
+//         skip,
+//         take: pageSize,
+//       }),
+//       this.prisma.incomingRecord.count({ where: baseWhere }),
+//     ]);
+
+//     return {
+//       items: items.map((r) => ({
+//         id: String(r.id),
+//         incomingNumber: r.incomingNumber,
+//         receivedDate: r.receivedDate as any,
+//         externalPartyName: r.externalParty?.name ?? '—',
+//         document: r.document,
+//         hasFiles: false, // مكانها لاحقًا عند ربط الملفات
+//       })),
+//       total,
+//       page,
+//       pageSize,
+//     };
+//   }
+
+//   /**
+//    * إحصائيات مبسطة للـDashboard.
+//    * { totalAll, totalToday, totalWeek, totalMonth }
+//    */
+//   async getIncomingStatsOverview() {
+//     const now = new Date();
+
+//     const todayStart = new Date(now);
+//     todayStart.setHours(0, 0, 0, 0);
+//     const todayEnd = new Date(now);
+//     todayEnd.setHours(23, 59, 59, 999);
+
+//     const weekStart = new Date(now);
+//     weekStart.setDate(weekStart.getDate() - 6);
+//     weekStart.setHours(0, 0, 0, 0);
+
+//     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+//     const monthEnd = todayEnd;
+
+//     const [totalAll, totalToday, totalWeek, totalMonth] =
+//       await this.prisma.$transaction([
+//         this.prisma.incomingRecord.count(),
+//         this.prisma.incomingRecord.count({
+//           where: { receivedDate: { gte: todayStart, lte: todayEnd } },
+//         }),
+//         this.prisma.incomingRecord.count({
+//           where: { receivedDate: { gte: weekStart, lte: todayEnd } },
+//         }),
+//         this.prisma.incomingRecord.count({
+//           where: { receivedDate: { gte: monthStart, lte: monthEnd } },
+//         }),
+//       ]);
+
+//     return { totalAll, totalToday, totalWeek, totalMonth };
+//   }
+
+//   // ================ Commands ================
+
+//   /**
+//    * إنشاء وارد سريع (Document + IncomingRecord [+ ExternalParty])
+//    */
+//   async createIncoming(
+//     payload: {
+//       documentTitle: string;
+//       owningDepartmentId: number;
+//       externalPartyName: string;
+//       deliveryMethod: string;
+//     },
+//     user: any,
+//   ) {
+//     const title = String(payload.documentTitle || '').trim();
+//     if (!title) throw new BadRequestException('Invalid title');
+
+//     const depId = Number(payload.owningDepartmentId);
+//     if (!depId || isNaN(depId)) {
+//       throw new BadRequestException('Invalid owningDepartmentId');
+//     }
+
+//     const extName = String(payload.externalPartyName || '').trim();
+//     if (!extName) throw new BadRequestException('Invalid externalPartyName');
+
+//     const year = new Date().getFullYear();
+
+//     return this.prisma.$transaction(async (tx) => {
+//       // تأكد/أنشئ ExternalParty بالاسم (غير حساس لحالة الأحرف)
+//       let external = await tx.externalParty.findFirst({
+//         where: { name: { equals: extName, mode: 'insensitive' } as any },
+//         select: { id: true },
+//       });
+//       if (!external) {
+//         external = await tx.externalParty.create({
+//           data: { name: extName, status: 'Active' },
+//           select: { id: true },
+//         });
+//       }
+
+//       // وثيقة
+//       const document = await tx.document.create({
+//         data: {
+//           title,
+//           currentStatus: 'Registered',
+//           documentType: { connect: { id: 1 } },   // تأكد من وجود القيَم
+//           securityLevel: { connect: { id: 1 } },  // تأكد من وجود القيَم
+//           createdByUser: { connect: { id: Number(user?.id) } },
+//           owningDepartment: { connect: { id: depId } },
+//         },
+//         select: { id: true, title: true },
+//       });
+
+//       // رقم الوارد
+//       const incomingNumber = await this.generateIncomingNumber(tx, year);
+
+//       const incoming = await tx.incomingRecord.create({
+//         data: {
+//           documentId: document.id,
+//           externalPartyId: external.id,
+//           receivedDate: new Date(),
+//           receivedByUserId: Number(user?.id),
+//           incomingNumber,
+//           deliveryMethod: payload.deliveryMethod as any,
+//           urgencyLevel: 'Normal',
+//         },
+//         select: {
+//           id: true,
+//           incomingNumber: true,
+//           receivedDate: true,
+//           document: { select: { id: true, title: true } },
+//           externalParty: { select: { name: true } },
+//         },
+//       });
+
+//       // توزيع افتراضي على قسم المالك
+//       await tx.incomingDistribution.create({
+//         data: {
+//           incomingId: incoming.id,
+//           targetDepartmentId: depId,
+//           status: 'Open',
+//         },
+//       });
+
+//       return {
+//         id: String(incoming.id),
+//         incomingNumber: incoming.incomingNumber,
+//         receivedDate: incoming.receivedDate as any,
+//         externalPartyName: incoming.externalParty?.name ?? extName,
+//         document: incoming.document,
+//       };
+//     });
+//   }
+// }
+
+
+
+
+// import { Injectable, BadRequestException } from '@nestjs/common';
+// import { PrismaService } from 'src/prisma/prisma.service';
+// import { Prisma } from '@prisma/client';
+
+// type PageParams = {
+//   page: number;
+//   pageSize: number;
+//   q?: string;
+//   from?: string; // YYYY-MM-DD
+//   to?: string;   // YYYY-MM-DD
+// };
+
+// @Injectable()
+// export class IncomingService {
+//   constructor(private prisma: PrismaService) {}
+
+//   // =========================
+//   // Helpers
+//   // =========================
+
+//   async getLatestIncoming(page: number, pageSize: number) {
+//     const rows = await this.prisma.incomingRecord.findMany({
+//       skip: (page - 1) * pageSize,
+//       take: pageSize,
+//     });
+//     const total = await this.prisma.incomingRecord.count();
+//     return {
+//       items: rows,
+//       total,
+//       page,
+//       pageSize,
+//     };
+//   }
+
+//   async getOverviewStats() {
+//     const totals = {
+//       incoming: {
+//         today: 10,
+//         last7Days: 30,
+//         thisMonth: 100,
+//         all: 500,
+//       },
+//     };
+//     return totals;
+//   }
+
+//   private likeInsensitive(v: string) {
+//     return { contains: v, mode: 'insensitive' as const };
+//   }
+
+//   private buildDateRange(from?: string, to?: string) {
+//     const where: Prisma.IncomingRecordWhereInput = {};
+//     const rf: Prisma.DateTimeFilter = {};
+
+//     if (from) {
+//       const d = new Date(from);
+//       if (!isNaN(d.getTime())) {
+//         rf.gte = d;
+//       }
+//     }
+//     if (to) {
+//       const d = new Date(to);
+//       if (!isNaN(d.getTime())) {
+//         d.setHours(23, 59, 59, 999);
+//         rf.lte = d;
+//       }
+//     }
+
+//     if (Object.keys(rf).length > 0) {
+//       where.receivedDate = rf;
+//     }
+//     return where;
+//   }
+
+//   private async generateIncomingNumber(
+//     tx: Prisma.TransactionClient,
+//     year: number,
+//   ) {
+//     const prefix = `${year}/`;
+//     const count = await tx.incomingRecord.count({
+//       where: { incomingNumber: { startsWith: prefix } as any },
+//     });
+//     const seq = count + 1;
+//     return `${prefix}${String(seq).padStart(6, '0')}`;
+//   }
+
+//   // =========================
+//   // Queries
+//   // =========================
+
+//   async listLatestForUser(user: any, take = 20) {
+//     const items = await this.prisma.incomingRecord.findMany({
+//       where: {
+//         distributions: {
+//           some: {
+//             OR: [
+//               { assignedToUserId: user?.id || 0 },
+//               { targetDepartmentId: user?.departmentId || 0 },
+//             ],
+//           },
+//         },
+//       },
+//       select: {
+//         id: true,
+//         incomingNumber: true,
+//         receivedDate: true,
+//         externalParty: { select: { name: true } },
+//         document: { select: { id: true, title: true} },
+//         _count: { select: { distributions: true } },
+//       },
+//       orderBy: [{ receivedDate: 'desc' }],
+//       take,
+//     });
+
+//     return items.map((r) => ({
+//       id: String(r.id),
+//       incomingNumber: r.incomingNumber,
+//       receivedDate: r.receivedDate,
+//       externalPartyName: r.externalParty?.name ?? '—',
+//       document: r.document,
+//       hasFiles: false,
+//       distributions: r._count.distributions,
+//     }));
+//   }
+
+//   async myDesk(user: any, params: PageParams) {
+//     const { page, pageSize, q, from, to } = params;
+//     const skip = (page - 1) * pageSize;
+
+//     const dateWhere = this.buildDateRange(from, to);
+//     const textWhere: Prisma.IncomingRecordWhereInput = q
+//       ? {
+//           OR: [
+//             { incomingNumber: this.likeInsensitive(q) },
+//             { document: { title: this.likeInsensitive(q) } },
+//             { externalParty: { name: this.likeInsensitive(q) } },
+//           ],
+//         }
+//       : {};
+
+//     const whereDist: Prisma.IncomingDistributionWhereInput = {
+//       OR: [
+//         { assignedToUserId: user?.id || 0 },
+//         { targetDepartmentId: user?.departmentId || 0 },
+//       ],
+//       incoming: { AND: [dateWhere, textWhere] },
+//     };
+
+//     const [items, total] = await this.prisma.$transaction([
+//       this.prisma.incomingDistribution.findMany({
+//         where: whereDist,
+//         select: {
+//           id: true,
+//           status: true,
+//           lastUpdateAt: true,
+//           incomingId: true,
+//           assignedToUserId: true,
+//           targetDepartmentId: true,
+//           incoming: {
+//             select: {
+//               id: true,
+//               incomingNumber: true,
+//               receivedDate: true,
+//               externalParty: { select: { name: true } },
+//               document: { select: { id: true, title: true } },
+//             },
+//           },
+//         },
+//         orderBy: [{ lastUpdateAt: 'desc' }],
+//         skip,
+//         take: pageSize,
+//       }),
+//       this.prisma.incomingDistribution.count({ where: whereDist }),
+//     ]);
+
+//     const rows = items.map((d) => ({
+//       id: String(d.id),
+//       distributionId: String(d.id),
+//       status: d.status,
+//       lastUpdateAt: d.lastUpdateAt,
+//       incomingId: String(d.incomingId),
+//       incomingNumber: d.incoming?.incomingNumber,
+//       receivedDate: d.incoming?.receivedDate,
+//       externalPartyName: d.incoming?.externalParty?.name ?? '—',
+//       document: d.incoming?.document || null,
+//     }));
+
+//     return {
+//       page,
+//       pageSize,
+//       total,
+//       pages: Math.max(1, Math.ceil(total / pageSize)),
+//       rows,
+//     };
+//   }
+
+//   async search(params: PageParams) {
+//     const { page, pageSize, q, from, to } = params;
+//     const skip = (page - 1) * pageSize;
+
+//     const dateWhere = this.buildDateRange(from, to);
+//     const textWhere: Prisma.IncomingRecordWhereInput = q
+//       ? {
+//           OR: [
+//             { incomingNumber: this.likeInsensitive(q) },
+//             { document: { title: this.likeInsensitive(q) } },
+//             { externalParty: { name: this.likeInsensitive(q) } },
+//           ],
+//         }
+//       : {};
+
+//     const where: Prisma.IncomingRecordWhereInput = { AND: [dateWhere, textWhere] };
+
+//     const [items, total] = await this.prisma.$transaction([
+//       this.prisma.incomingRecord.findMany({
+//         where,
+//         select: {
+//           id: true,
+//           incomingNumber: true,
+//           receivedDate: true,
+//           externalParty: { select: { name: true } },
+//           document: { select: { id: true, title: true } },
+//           _count: { select: { distributions: true } },
+//         },
+//         orderBy: [{ receivedDate: 'desc' }],
+//         skip,
+//         take: pageSize,
+//       }),
+//       this.prisma.incomingRecord.count({ where }),
+//     ]);
+
+//     const rows = items.map((r) => ({
+//       id: String(r.id),
+//       incomingNumber: r.incomingNumber,
+//       receivedDate: r.receivedDate,
+//       externalPartyName: r.externalParty?.name ?? '—',
+//       document: r.document,
+//       distributions: r._count.distributions,
+//     }));
+
+//     return {
+//       page,
+//       pageSize,
+//       total,
+//       pages: Math.max(1, Math.ceil(total / pageSize)),
+//       rows,
+//     };
+//   }
+
+//   async createIncoming(
+//     payload: {
+//       documentTitle: string;
+//       owningDepartmentId: number;
+//       externalPartyName: string;
+//       deliveryMethod: string;
+//     },
+//     user: any,
+//   ) {
+//     const title = String(payload.documentTitle || '').trim();
+//     if (!title) throw new BadRequestException('Invalid title');
+
+//     if (!payload.owningDepartmentId || isNaN(Number(payload.owningDepartmentId))) {
+//       throw new BadRequestException('Invalid owningDepartmentId');
+//     }
+
+//     const extName = String(payload.externalPartyName || '').trim();
+//     if (!extName) throw new BadRequestException('Invalid externalPartyName');
+
+//     const year = new Date().getFullYear();
+
+//     return this.prisma.$transaction(async (tx) => {
+//       let external = await tx.externalParty.findFirst({
+//         where: { name: { equals: extName, mode: 'insensitive' } as any },
+//         select: { id: true },
+//       });
+
+//       if (!external) {
+//         external = await tx.externalParty.create({
+//           data: { name: extName, status: 'Active' },
+//           select: { id: true },
+//         });
+//       }
+
+//       const document = await tx.document.create({
+//         data: {
+//           title,
+//           currentStatus: 'Registered',
+//           documentType: { connect: { id: 1 } },
+//           securityLevel: { connect: { id: 1 } },
+//           createdByUser: { connect: { id: Number(user?.id) } },
+//           owningDepartment: { connect: { id: Number(payload.owningDepartmentId) } },
+//         },
+//         select: { id: true, title: true },
+//       });
+
+//       const incomingNumber = await this.generateIncomingNumber(tx, year);
+
+//       const incoming = await tx.incomingRecord.create({
+//         data: {
+//           documentId: document.id,
+//           externalPartyId: external.id,
+//           receivedDate: new Date(),
+//           receivedByUserId: user?.id,
+//           incomingNumber,
+//           deliveryMethod: payload.deliveryMethod as any,
+//           urgencyLevel: 'Normal',
+//         },
+//         select: {
+//           id: true,
+//           incomingNumber: true,
+//           receivedDate: true,
+//           document: { select: { id: true, title: true } },
+//           externalParty: { select: { name: true } },
+//         },
+//       });
+
+//       await tx.incomingDistribution.create({
+//         data: {
+//           incomingId: incoming.id,
+//           targetDepartmentId: Number(payload.owningDepartmentId),
+//           status: 'Open',
+//           notes: null,
+//         },
+//       });
+
+//       return {
+//         id: String(incoming.id),
+//         incomingNumber: incoming.incomingNumber,
+//         receivedDate: incoming.receivedDate,
+//         externalPartyName: incoming.externalParty?.name ?? extName,
+//         document: incoming.document,
+//       };
+//     });
+//   }
+// }
