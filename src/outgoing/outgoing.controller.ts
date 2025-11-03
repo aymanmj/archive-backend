@@ -1,16 +1,17 @@
-// src/outgoing/outgoing.controller.ts
 import {
   BadRequestException,
   Body,
   Controller,
   Get,
+  NotFoundException,
+  Param,
   Post,
   Query,
-  Req,
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { OutgoingService } from './outgoing.service';
+import { DeliveryMethod } from '@prisma/client';
 
 @UseGuards(JwtAuthGuard)
 @Controller('outgoing')
@@ -19,10 +20,9 @@ export class OutgoingController {
 
   /**
    * GET /outgoing/my-latest?page=1&pageSize=20
-   * أحدث معاملات الصادر مع ترقيم (وبـ hasFiles).
    */
   @Get('my-latest')
-  async getLatestOutgoing(
+  async myLatest(
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
@@ -33,7 +33,6 @@ export class OutgoingController {
 
   /**
    * GET /outgoing/search?page=&pageSize=&q=&from=&to=
-   * بحث عام في الصادر مع ترقيم.
    */
   @Get('search')
   async search(
@@ -44,8 +43,8 @@ export class OutgoingController {
     @Query('to') to?: string,
   ) {
     return this.outgoingService.search({
-      page: Number(page) || 1,
-      pageSize: Math.min(Number(pageSize) || 20, 100),
+      page: Math.max(1, Number(page) || 1),
+      pageSize: Math.min(100, Number(pageSize) || 20),
       q: (q ?? '').trim(),
       from,
       to,
@@ -54,26 +53,33 @@ export class OutgoingController {
 
   /**
    * GET /outgoing/stats/overview
-   * أرقام الداشبورد للصادر.
    */
   @Get('stats/overview')
-  async dashboardStats() {
-    return this.outgoingService.statsOverviewForDashboard();
+  async statsOverview() {
+    return this.outgoingService.statsOverview();
+  }
+
+  /**
+   * GET /outgoing/:id
+   */
+  @Get(':id')
+  async getOne(@Param('id') id: string) {
+    return this.outgoingService.getOne(id);
   }
 
   /**
    * POST /outgoing
-   * إنشاء صادر سريع (اختياري – متناظر للوارد).
-   * body: { documentTitle, owningDepartmentId, externalPartyName, sendMethod }
-   *   - sendMethod ∈ DeliveryMethod (Hand/Mail/Email/...)
+   * body: { documentTitle, owningDepartmentId, externalPartyName, sendMethod, issueDate?, signedByUserId }
    */
   @Post()
-  async createQuickOutgoing(@Body() body: any, @Req() req: any) {
+  async create(@Body() body: any) {
     const {
       documentTitle,
       owningDepartmentId,
       externalPartyName,
-      sendMethod, // لاحظ الاسم
+      sendMethod,
+      issueDate,
+      signedByUserId,
     } = body ?? {};
 
     if (!documentTitle || !String(documentTitle).trim()) {
@@ -85,8 +91,11 @@ export class OutgoingController {
     if (!externalPartyName || !String(externalPartyName).trim()) {
       throw new BadRequestException('externalPartyName is required');
     }
-    if (!sendMethod || !String(sendMethod).trim()) {
-      throw new BadRequestException('sendMethod is required');
+    if (!sendMethod || !Object.values(DeliveryMethod).includes(sendMethod)) {
+      throw new BadRequestException('sendMethod is invalid');
+    }
+    if (!signedByUserId || isNaN(Number(signedByUserId))) {
+      throw new BadRequestException('signedByUserId is required');
     }
 
     return this.outgoingService.createOutgoing(
@@ -94,48 +103,107 @@ export class OutgoingController {
         documentTitle: String(documentTitle).trim(),
         owningDepartmentId: Number(owningDepartmentId),
         externalPartyName: String(externalPartyName).trim(),
-        sendMethod: String(sendMethod),
+        sendMethod: sendMethod as DeliveryMethod,
+        issueDate: issueDate ? String(issueDate) : undefined,
+        signedByUserId: Number(signedByUserId),
       },
-      req.user,
+      // يُمكن تمرير المستخدم الحقيقي من req.user لاحقًا إن رغبت
+      undefined,
     );
+  }
+
+  /**
+   * POST /outgoing/:id/delivered
+   * body: { delivered: boolean, proofPath?: string | null }
+   */
+  @Post(':id/delivered')
+  async markDelivered(@Param('id') id: string, @Body() body: any) {
+    const delivered = !!body?.delivered;
+    const proofPath = body?.proofPath ?? null;
+    return this.outgoingService.markDelivered(id, delivered, proofPath);
   }
 }
 
 
 
-// import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
+
+// // src/outgoing/outgoing.controller.ts
+
+// import {
+//   BadRequestException,
+//   Body,
+//   Controller,
+//   Get,
+//   Param,
+//   Patch,
+//   Post,
+//   Query,
+//   Req,
+//   UseGuards,
+// } from '@nestjs/common';
 // import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 // import { OutgoingService } from './outgoing.service';
 
-// @Controller('outgoing')
 // @UseGuards(JwtAuthGuard)
+// @Controller('outgoing')
 // export class OutgoingController {
 //   constructor(private readonly outgoingService: OutgoingService) {}
 
-//   @Get()
-//   list(@Req() req: any) {
-//     return this.outgoingService.listLatestForUser(req.user); // ✅ أزلنا limit الزائد
+//   @Get('my-latest')
+//   async latest(@Query('page') page?: string, @Query('pageSize') pageSize?: string) {
+//     return this.outgoingService.getLatest(Number(page) || 1, Math.min(Number(pageSize) || 20, 100));
+//   }
+
+//   @Get('search')
+//   async search(
+//     @Query('page') page?: string,
+//     @Query('pageSize') pageSize?: string,
+//     @Query('q') q?: string,
+//     @Query('from') from?: string,
+//     @Query('to') to?: string,
+//   ) {
+//     return this.outgoingService.search({
+//       page: Number(page) || 1,
+//       pageSize: Math.min(Number(pageSize) || 20, 100),
+//       q: (q ?? '').trim(),
+//       from,
+//       to,
+//     });
+//   }
+
+//   @Get('stats/overview')
+//   async stats(@Query('from') from?: string, @Query('to') to?: string) {
+//     return this.outgoingService.statsOverview({ from, to });
 //   }
 
 //   @Get(':id')
-//   getOne(@Param('id') id: string, @Req() req: any) {
-//     return this.outgoingService.getOneForUser(id, req.user);
+//   async details(@Param('id') id: string) {
+//     if (!id) throw new BadRequestException('id required');
+//     return this.outgoingService.getOne(id);
 //   }
 
 //   @Post()
-//   create(@Body() body: any, @Req() req: any) {
+//   async create(@Body() body: any, @Req() req: any) {
+//     const { documentTitle, owningDepartmentId, externalPartyName, sendMethod, signedByUserId } = body ?? {};
+//     if (!documentTitle || !String(documentTitle).trim()) throw new BadRequestException('documentTitle required');
+//     if (!owningDepartmentId || isNaN(Number(owningDepartmentId))) throw new BadRequestException('owningDepartmentId required');
+//     if (!externalPartyName || !String(externalPartyName).trim()) throw new BadRequestException('externalPartyName required');
+//     if (!sendMethod || !String(sendMethod).trim()) throw new BadRequestException('sendMethod required');
+
 //     return this.outgoingService.createOutgoing({
-//       subject: body.subject,
-//       departmentId: Number(body.departmentId),
-//       externalPartyName: body.externalPartyName,
-//       externalPartyType: body.externalPartyType,
-//       sendMethod: body.sendMethod,
-//     }, req.user); // ✅ نمرر user
+//       documentTitle: String(documentTitle).trim(),
+//       owningDepartmentId: Number(owningDepartmentId),
+//       externalPartyName: String(externalPartyName).trim(),
+//       sendMethod: String(sendMethod),
+//       signedByUserId: Number(signedByUserId ?? req.user?.id),
+//       creatorUserId: Number(req.user?.id),
+//     });
 //   }
 
-//   @UseGuards(JwtAuthGuard)
-//   @Get('stats/overview')
-//   async outgoingStatsOverview(@Req() req: any) {
-//     return this.outgoingService.statsOverview(req.user);
+//   // علامة تم التسليم (proof اختياري)
+//   @Patch(':id/delivered')
+//   async markDelivered(@Param('id') id: string, @Body() body: { deliveryProofPath?: string }) {
+//     return this.outgoingService.markDelivered(id, body.deliveryProofPath);
 //   }
 // }
+
