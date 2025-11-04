@@ -1,4 +1,5 @@
 // src/main.ts
+
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { Logger, ValidationPipe } from '@nestjs/common';
@@ -28,10 +29,32 @@ async function bootstrap() {
   });
 
   // 🔒 Helmet — ترويسات أمان أساسية
+  // app.use(
+  //   helmet({
+  //     crossOriginResourcePolicy: { policy: 'cross-origin' },
+  //   }),
+  // );
+
   app.use(
     helmet({
+      // للسماح بالمعاينة عبر iframe أثناء التطوير (vite على 5173 والـ API على 3000)
+      frameguard: process.env.NODE_ENV !== 'production' ? false : { action: 'sameorigin' },
+
+      // نتركه cross-origin لأن الملفات تُقرأ من أصل مختلف أثناء التطوير
       crossOriginResourcePolicy: { policy: 'cross-origin' },
-    }),
+
+      // إن أردت تفعيل CSP في الإنتاج فقط
+      contentSecurityPolicy:
+        process.env.NODE_ENV !== 'production'
+          ? false
+          : {
+              useDefaults: true,
+              directives: {
+                // في الإنتاج الصفحة والملف من نفس الأصل
+                "frame-ancestors": ["'self'"],
+              },
+            },
+    })
   );
 
   // 🛡️ CORS عملي للتطوير والإنتاج
@@ -91,9 +114,10 @@ async function bootstrap() {
 
   // ✅ تأكد من وجود مجلد الرفع ثم قدّمه على /files
   ensureDir(UPLOAD_ROOT);
-  app.useStaticAssets(join(UPLOAD_ROOT), {
-    prefix: '/files/',
-  });
+  // app.useStaticAssets(join(UPLOAD_ROOT), {
+  //   prefix: '/files/',
+  // });
+  (app as any).useStaticAssets(join(process.cwd(), 'uploads'), { prefix: '/files/' });
 
   const port = process.env.PORT ? Number(process.env.PORT) : 3000;
   await app.listen(port);

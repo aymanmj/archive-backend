@@ -136,7 +136,8 @@ export class FilesController {
     return {
       id: String(saved.id),
       fileNameOriginal: saved.fileNameOriginal,
-      fileUrl: `/files/${saved.storagePath}`,
+      // fileUrl: `/files/${saved.storagePath}`,
+      fileUrl: `/files/${saved.storagePath.replace(/\\/g, '/')}`,
       fileExtension: saved.fileExtension,
       fileSizeBytes: Number(saved.fileSizeBytes),
       uploadedAt: saved.uploadedAt,
