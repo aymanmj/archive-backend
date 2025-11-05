@@ -7,6 +7,7 @@ import {
   ParseIntPipe,
   BadRequestException,
 } from '@nestjs/common';
+
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { PrismaService } from 'src/prisma/prisma.service';
