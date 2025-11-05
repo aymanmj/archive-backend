@@ -223,6 +223,19 @@ export class IncomingController {
     if (!note) throw new BadRequestException('note is required');
     return this.incomingService.addDistributionNote(distId, note, req.user);
   }
+
+  // GET /incoming/stats/daily?days=30
+  @Get('stats/daily')
+  async daily(@Query('days') days?: string) {
+    return this.incomingService.dailySeries(Number(days) || 30);
+  }
+
+  // GET /incoming/stats/my-desk
+  @Get('stats/my-desk')
+  async myDeskStatus(@Req() req: any) {
+    return this.incomingService.myDeskStatus(req.user);
+  }
+
 }
 
 

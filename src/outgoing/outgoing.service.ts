@@ -411,6 +411,28 @@ export class OutgoingService {
       deliveryProofPath: updated.deliveryProofPath,
     };
   }
+
+
+  async dailySeries(days = 30) {
+    const n = Math.max(1, Math.min(365, Number(days) || 30));
+    const rows: Array<{ d: Date; c: bigint }> = await this.prisma.$queryRaw`
+      SELECT date_trunc('day', "issueDate")::date AS d, COUNT(*)::bigint AS c
+      FROM "OutgoingRecord"
+      WHERE "issueDate" >= (CURRENT_DATE - ${n} * INTERVAL '1 day')
+      GROUP BY 1
+      ORDER BY 1;
+    `;
+    const map = new Map<string, number>();
+    rows.forEach(r => map.set(new Date(r.d).toISOString().slice(0,10), Number(r.c)));
+    const out: { date: string; count: number }[] = [];
+    for (let i = n - 1; i >= 0; i--) {
+      const d = new Date(); d.setDate(d.getDate() - i);
+      const key = d.toISOString().slice(0,10);
+      out.push({ date: key, count: map.get(key) ?? 0 });
+    }
+    return { days: n, series: out };
+  }
+
 }
 
 

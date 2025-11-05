@@ -913,6 +913,45 @@ export class IncomingService {
       return { ok: true };
     });
   }
+
+  // *** Daily series for last N days (PostgreSQL) ***
+  async dailySeries(days = 30) {
+    const n = Math.max(1, Math.min(365, Number(days) || 30));
+    const rows: Array<{ d: Date; c: bigint }> = await this.prisma.$queryRaw`
+      SELECT date_trunc('day', "receivedDate")::date AS d, COUNT(*)::bigint AS c
+      FROM "IncomingRecord"
+      WHERE "receivedDate" >= (CURRENT_DATE - ${n} * INTERVAL '1 day')
+      GROUP BY 1
+      ORDER BY 1;
+    `;
+    // املأ الأيام الناقصة بصفر
+    const map = new Map<string, number>();
+    rows.forEach(r => map.set(new Date(r.d).toISOString().slice(0,10), Number(r.c)));
+    const out: { date: string; count: number }[] = [];
+    for (let i = n - 1; i >= 0; i--) {
+      const d = new Date(); d.setDate(d.getDate() - i);
+      const key = d.toISOString().slice(0,10);
+      out.push({ date: key, count: map.get(key) ?? 0 });
+    }
+    return { days: n, series: out };
+  }
+
+  // *** My-desk status distribution (يعتمد على user) ***
+  async myDeskStatus(reqUser: any) {
+    const base: Prisma.IncomingDistributionWhereInput = {
+      OR: [
+        { assignedToUserId: reqUser?.id || 0 },
+        { targetDepartmentId: reqUser?.departmentId || 0 },
+      ],
+    };
+    const [open, prog, closed] = await this.prisma.$transaction([
+      this.prisma.incomingDistribution.count({ where: { ...base, status: 'Open' as any } }),
+      this.prisma.incomingDistribution.count({ where: { ...base, status: 'InProgress' as any } }),
+      this.prisma.incomingDistribution.count({ where: { ...base, status: 'Closed' as any } }),
+    ]);
+    return { open, inProgress: prog, closed };
+  }
+
 }
 
 

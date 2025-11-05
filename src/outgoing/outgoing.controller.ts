@@ -122,6 +122,13 @@ export class OutgoingController {
     const proofPath = body?.proofPath ?? null;
     return this.outgoingService.markDelivered(id, delivered, proofPath);
   }
+
+  // GET /outgoing/stats/daily?days=30
+  @Get('stats/daily')
+  async daily(@Query('days') days?: string) {
+    return this.outgoingService.dailySeries(Number(days) || 30);
+  }
+
 }
 
 
