@@ -20,35 +20,7 @@ export class IncomingService {
   // Helpers
   // =========================
 
-  // async getLatestIncoming(page: number, pageSize: number) {
-  //   const rows = await this.prisma.incomingRecord.findMany({
-  //     skip: (page - 1) * pageSize,
-  //     take: pageSize,
-  //     orderBy: { receivedDate: 'desc' },
-  //     select: {
-  //       id: true,
-  //       incomingNumber: true,
-  //       receivedDate: true,
-  //       externalParty: { select: { name: true } },
-  //       document: { select: { id: true, title: true } },
-  //       _count: { select: { distributions: true } },
-  //     },
-  //   });
-  //   const total = await this.prisma.incomingRecord.count();
-  //   return {
-  //     items: rows.map((r) => ({
-  //       id: String(r.id),
-  //       incomingNumber: r.incomingNumber,
-  //       receivedDate: r.receivedDate,
-  //       externalPartyName: r.externalParty?.name ?? '—',
-  //       document: r.document,
-  //       hasFiles: undefined, // سنحسبه في details
-  //     })),
-  //     total,
-  //     page,
-  //     pageSize,
-  //   };
-  // }
+  
   async getLatestIncoming(page: number, pageSize: number) {
     const rows = await this.prisma.incomingRecord.findMany({
       skip: (page - 1) * pageSize,
@@ -135,41 +107,6 @@ export class IncomingService {
   // Queries (lists & search)
   // =========================
 
-  // async listLatestForUser(user: any, take = 20) {
-  //   const items = await this.prisma.incomingRecord.findMany({
-  //     where: {
-  //       distributions: {
-  //         some: {
-  //           OR: [
-  //             { assignedToUserId: user?.id || 0 },
-  //             { targetDepartmentId: user?.departmentId || 0 },
-  //           ],
-  //         },
-  //       },
-  //     },
-  //     select: {
-  //       id: true,
-  //       incomingNumber: true,
-  //       receivedDate: true,
-  //       externalParty: { select: { name: true } },
-  //       document: { select: { id: true, title: true} },
-  //       _count: { select: { distributions: true } },
-  //     },
-  //     orderBy: [{ receivedDate: 'desc' }],
-  //     take,
-  //   });
-
-  //   return items.map((r) => ({
-  //     id: String(r.id),
-  //     incomingNumber: r.incomingNumber,
-  //     receivedDate: r.receivedDate,
-  //     externalPartyName: r.externalParty?.name ?? '—',
-  //     document: r.document,
-  //     hasFiles: false,
-  //     distributions: r._count.distributions,
-  //   }));
-  // }
-
   async listLatestForUser(user: any, take = 20) {
     const items = await this.prisma.incomingRecord.findMany({
       where: {
@@ -214,78 +151,6 @@ export class IncomingService {
       distributions: r._count.distributions,
     }));
   }
-
-
-  // async myDesk(user: any, params: PageParams) {
-  //   const { page, pageSize, q, from, to } = params;
-  //   const skip = (page - 1) * pageSize;
-
-  //   const dateWhere = this.buildDateRange(from, to);
-  //   const textWhere: Prisma.IncomingRecordWhereInput = q
-  //     ? {
-  //         OR: [
-  //           { incomingNumber: this.likeInsensitive(q) },
-  //           { document: { title: this.likeInsensitive(q) } },
-  //           { externalParty: { name: this.likeInsensitive(q) } },
-  //         ],
-  //       }
-  //     : {};
-
-  //   const whereDist: Prisma.IncomingDistributionWhereInput = {
-  //     OR: [
-  //       { assignedToUserId: user?.id || 0 },
-  //       { targetDepartmentId: user?.departmentId || 0 },
-  //     ],
-  //     incoming: { AND: [dateWhere, textWhere] },
-  //   };
-
-  //   const [items, total] = await this.prisma.$transaction([
-  //     this.prisma.incomingDistribution.findMany({
-  //       where: whereDist,
-  //       select: {
-  //         id: true,
-  //         status: true,
-  //         lastUpdateAt: true,
-  //         incomingId: true,
-  //         assignedToUserId: true,
-  //         targetDepartmentId: true,
-  //         incoming: {
-  //           select: {
-  //             id: true,
-  //             incomingNumber: true,
-  //             receivedDate: true,
-  //             externalParty: { select: { name: true } },
-  //             document: { select: { id: true, title: true } },
-  //           },
-  //         },
-  //       },
-  //       orderBy: [{ lastUpdateAt: 'desc' }],
-  //       skip,
-  //       take: pageSize,
-  //     }),
-  //     this.prisma.incomingDistribution.count({ where: whereDist }),
-  //   ]);
-
-  //   const rows = items.map((d) => ({
-  //     id: String(d.id),
-  //     distributionId: String(d.id),
-  //     status: d.status,
-  //     lastUpdateAt: d.lastUpdateAt,
-  //     incomingId: String(d.incomingId),
-  //     incomingNumber: d.incoming?.incomingNumber,
-  //     receivedDate: d.incoming?.receivedDate,
-  //     externalPartyName: d.incoming?.externalParty?.name ?? '—',
-  //     document: d.incoming?.document || null,
-  //   }));
-
-  //   return {
-  //     page,
-  //     pageSize,
-  //     total,
-  //     pages: Math.max(1, Math.ceil(total / pageSize)),
-  //     rows,
-  //   };
-  // }
 
   async myDesk(user: any, params: PageParams & {
     deptId?: string;
@@ -383,60 +248,6 @@ export class IncomingService {
       rows,
     };
   }
-
-
-  // async search(params: PageParams) {
-  //   const { page, pageSize, q, from, to } = params;
-  //   const skip = (page - 1) * pageSize;
-
-  //   const dateWhere = this.buildDateRange(from, to);
-  //   const textWhere: Prisma.IncomingRecordWhereInput = q
-  //     ? {
-  //         OR: [
-  //           { incomingNumber: this.likeInsensitive(q) },
-  //           { document: { title: this.likeInsensitive(q) } },
-  //           { externalParty: { name: this.likeInsensitive(q) } },
-  //         ],
-  //       }
-  //     : {};
-
-  //   const where: Prisma.IncomingRecordWhereInput = { AND: [dateWhere, textWhere] };
-
-  //   const [items, total] = await this.prisma.$transaction([
-  //     this.prisma.incomingRecord.findMany({
-  //       where,
-  //       select: {
-  //         id: true,
-  //         incomingNumber: true,
-  //         receivedDate: true,
-  //         externalParty: { select: { name: true } },
-  //         document: { select: { id: true, title: true } },
-  //         _count: { select: { distributions: true } },
-  //       },
-  //       orderBy: [{ receivedDate: 'desc' }],
-  //       skip,
-  //       take: pageSize,
-  //     }),
-  //     this.prisma.incomingRecord.count({ where }),
-  //   ]);
-
-  //   const rows = items.map((r) => ({
-  //     id: String(r.id),
-  //     incomingNumber: r.incomingNumber,
-  //     receivedDate: r.receivedDate,
-  //     externalPartyName: r.externalParty?.name ?? '—',
-  //     document: r.document,
-  //     distributions: r._count.distributions,
-  //   }));
-
-  //   return {
-  //     page,
-  //     pageSize,
-  //     total,
-  //     pages: Math.max(1, Math.ceil(total / pageSize)),
-  //     rows,
-  //   };
-  // }
 
   async search(params: PageParams) {
     const { page, pageSize, q, from, to } = params;
