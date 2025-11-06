@@ -152,19 +152,33 @@ export class IncomingService {
     }));
   }
 
-  async myDesk(user: any, params: PageParams & {
-    deptId?: string;
-    assigneeId?: string;
-    incomingNumber?: string;
-    distributionId?: string;
-  }) {
+  
+  async myDesk(
+    user: any,
+    params: PageParams & {
+      deptId?: string;
+      assigneeId?: string;
+      incomingNumber?: string;
+      distributionId?: string;
+    }
+  ) {
     const { page, pageSize, q, from, to } = params;
     const skip = (page - 1) * pageSize;
 
-    const deptId = params.deptId ? Number(params.deptId) : undefined;
-    const assigneeId = params.assigneeId ? Number(params.assigneeId) : undefined;
-    const distributionId = params.distributionId ? BigInt(params.distributionId as any) : undefined;
-    const incomingNumber = params.incomingNumber?.trim();
+    // اجلب القسم عند الحاجة
+    let effectiveDeptId = user?.departmentId ?? null;
+    if (!effectiveDeptId && user?.id) {
+      const u = await this.prisma.user.findUnique({
+        where: { id: Number(user.id) },
+        select: { departmentId: true },
+      });
+      effectiveDeptId = u?.departmentId ?? null;
+    }
+
+    const filterDeptId      = params.deptId      ? Number(params.deptId)      : undefined;
+    const filterAssigneeId  = params.assigneeId  ? Number(params.assigneeId)  : undefined;
+    const filterDistId      = params.distributionId ? BigInt(params.distributionId as any) : undefined;
+    const filterIncomingNum = params.incomingNumber?.trim();
 
     const dateWhere = this.buildDateRange(from, to);
     const textWhere: Prisma.IncomingRecordWhereInput = q
@@ -177,28 +191,31 @@ export class IncomingService {
         }
       : {};
 
+    // ✅ ابنِ OR بشرطية (مستخدم/قسم)
+    const myDeskOr: Prisma.IncomingDistributionWhereInput[] = [];
+    if (user?.id)         myDeskOr.push({ assignedToUserId: Number(user.id) });
+    if (effectiveDeptId)  myDeskOr.push({ targetDepartmentId: Number(effectiveDeptId) });
+
     const whereDist: Prisma.IncomingDistributionWhereInput = {
-      OR: [
-        { assignedToUserId: user?.id || 0 },
-        { targetDepartmentId: user?.departmentId || 0 },
-      ],
+      ...(myDeskOr.length ? { OR: myDeskOr } : {}),
       incoming: { AND: [dateWhere, textWhere] },
     };
 
-    if (typeof deptId === 'number' && !isNaN(deptId)) {
-      whereDist.targetDepartmentId = deptId;
+    // فلاتر رأسية من الواجهة (عند اختيارها تُقيّد النتائج)
+    if (typeof filterDeptId === 'number' && !isNaN(filterDeptId)) {
+      whereDist.targetDepartmentId = filterDeptId;
     }
-    if (typeof assigneeId === 'number' && !isNaN(assigneeId)) {
-      whereDist.assignedToUserId = assigneeId;
+    if (typeof filterAssigneeId === 'number' && !isNaN(filterAssigneeId)) {
+      whereDist.assignedToUserId = filterAssigneeId;
     }
-    if (incomingNumber) {
+    if (filterIncomingNum) {
       whereDist.incoming = {
         ...(whereDist.incoming ?? {}),
-        incomingNumber: { equals: incomingNumber },
+        incomingNumber: { equals: filterIncomingNum },
       } as any;
     }
-    if (typeof distributionId === 'bigint') {
-      whereDist.id = distributionId;
+    if (typeof filterDistId === 'bigint') {
+      whereDist.id = filterDistId;
     }
 
     const [items, total] = await this.prisma.$transaction([
@@ -248,6 +265,7 @@ export class IncomingService {
       rows,
     };
   }
+
 
   async search(params: PageParams) {
     const { page, pageSize, q, from, to } = params;
@@ -313,55 +331,47 @@ export class IncomingService {
     };
   }
 
-
+ 
   async statsOverview(user: any, range?: { from?: string; to?: string }) {
     const now = new Date();
 
-    const todayStart = new Date(now);
-    todayStart.setHours(0, 0, 0, 0);
-    const todayEnd = new Date(now);
-    todayEnd.setHours(23, 59, 59, 999);
+    const todayStart = new Date(now); todayStart.setHours(0,0,0,0);
+    const todayEnd   = new Date(now); todayEnd.setHours(23,59,59,999);
 
-    const last7Start = new Date(now);
-    last7Start.setDate(last7Start.getDate() - 6);
-    last7Start.setHours(0, 0, 0, 0);
-    const last7End = todayEnd;
+    const last7Start = new Date(now); last7Start.setDate(last7Start.getDate() - 6); last7Start.setHours(0,0,0,0);
+    const last7End   = todayEnd;
 
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthEnd = todayEnd;
+    const monthEnd   = todayEnd;
 
-    const whereToday: Prisma.IncomingRecordWhereInput = {
-      receivedDate: { gte: todayStart, lte: todayEnd },
-    };
-    const whereLast7: Prisma.IncomingRecordWhereInput = {
-      receivedDate: { gte: last7Start, lte: last7End },
-    };
-    const whereThisMonth: Prisma.IncomingRecordWhereInput = {
-      receivedDate: { gte: monthStart, lte: monthEnd },
-    };
-    const whereAll: Prisma.IncomingRecordWhereInput = (() => {
+    const whereToday: Prisma.IncomingRecordWhereInput     = { receivedDate: { gte: todayStart,  lte: todayEnd  } };
+    const whereLast7: Prisma.IncomingRecordWhereInput     = { receivedDate: { gte: last7Start,  lte: last7End  } };
+    const whereMonth: Prisma.IncomingRecordWhereInput     = { receivedDate: { gte: monthStart,  lte: monthEnd  } };
+    const whereAll:   Prisma.IncomingRecordWhereInput     = (() => {
       if (!range?.from && !range?.to) return {};
       const rf: Prisma.DateTimeFilter = {};
-      if (range?.from) {
-        const d = new Date(range.from);
-        if (!isNaN(d.getTime())) rf.gte = d;
-      }
-      if (range?.to) {
-        const d = new Date(range.to);
-        if (!isNaN(d.getTime())) {
-          d.setHours(23, 59, 59, 999);
-          rf.lte = d;
-        }
-      }
+      if (range?.from) { const d = new Date(range.from); if (!isNaN(d.getTime())) rf.gte = d; }
+      if (range?.to)   { const d = new Date(range.to);   if (!isNaN(d.getTime())) { d.setHours(23,59,59,999); rf.lte = d; } }
       return Object.keys(rf).length ? { receivedDate: rf } : {};
     })();
 
-    const myDeskBase: Prisma.IncomingDistributionWhereInput = {
-      OR: [
-        { assignedToUserId: user?.id || 0 },
-        { targetDepartmentId: user?.departmentId || 0 },
-      ],
-    };
+    // ⚠️ استرجاع القسم عند غيابه من التوكن
+    let effectiveDeptId = user?.departmentId ?? null;
+    if (!effectiveDeptId && user?.id) {
+      const u = await this.prisma.user.findUnique({
+        where: { id: Number(user.id) },
+        select: { departmentId: true },
+      });
+      effectiveDeptId = u?.departmentId ?? null;
+    }
+
+    // ✅ ابنِ شروط OR بشرطية
+    const myDeskOr: Prisma.IncomingDistributionWhereInput[] = [];
+    if (user?.id)         myDeskOr.push({ assignedToUserId: Number(user.id) });
+    if (effectiveDeptId)  myDeskOr.push({ targetDepartmentId: Number(effectiveDeptId) });
+
+    const myDeskBase: Prisma.IncomingDistributionWhereInput =
+      myDeskOr.length ? { OR: myDeskOr } : {}; // لو فاضي، ما نضيف أي قيد
 
     const [
       incomingToday,
@@ -374,17 +384,11 @@ export class IncomingService {
     ] = await this.prisma.$transaction([
       this.prisma.incomingRecord.count({ where: whereToday }),
       this.prisma.incomingRecord.count({ where: whereLast7 }),
-      this.prisma.incomingRecord.count({ where: whereThisMonth }),
+      this.prisma.incomingRecord.count({ where: whereMonth }),
       this.prisma.incomingRecord.count({ where: whereAll }),
-      this.prisma.incomingDistribution.count({
-        where: { ...myDeskBase, status: 'Open' as any },
-      }),
-      this.prisma.incomingDistribution.count({
-        where: { ...myDeskBase, status: 'InProgress' as any },
-      }),
-      this.prisma.incomingDistribution.count({
-        where: { ...myDeskBase, status: 'Closed' as any },
-      }),
+      this.prisma.incomingDistribution.count({ where: { ...myDeskBase, status: 'Open'       as any } }),
+      this.prisma.incomingDistribution.count({ where: { ...myDeskBase, status: 'InProgress' as any } }),
+      this.prisma.incomingDistribution.count({ where: { ...myDeskBase, status: 'Closed'     as any } }),
     ]);
 
     return {
