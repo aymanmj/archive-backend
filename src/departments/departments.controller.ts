@@ -1,29 +1,32 @@
-// src/departments/departments.controller.ts
 import {
-  Body, Controller, Get, Patch, Param, ParseIntPipe, Query, Post,
+  Body, Controller, Get, Patch, Param, ParseIntPipe, Query, Post, UseGuards,
 } from '@nestjs/common';
+import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { RequirePermissions } from 'src/auth/permissions.decorator';
+import { PERMISSIONS } from 'src/auth/permissions.constants';
 import { DepartmentsService } from './departments.service';
 import { UpdateStatusDto } from './dto/update-status.dto';
 import { CreateDepartmentDto } from './dto/create-department.dto';
 
+@UseGuards(JwtAuthGuard)
 @Controller('departments')
 export class DepartmentsController {
   constructor(private readonly departmentsService: DepartmentsService) {}
 
-  // GET /departments?status=Active
   @Get()
+  @RequirePermissions(PERMISSIONS.DEPARTMENTS_READ)
   async findAll(@Query('status') status?: string) {
     return this.departmentsService.findAll({ status });
   }
 
-  // POST /departments
   @Post()
+  @RequirePermissions(PERMISSIONS.DEPARTMENTS_CREATE)
   async create(@Body() body: CreateDepartmentDto) {
     return this.departmentsService.create(body);
   }
 
-  // PATCH /departments/:id/status
   @Patch(':id/status')
+  @RequirePermissions(PERMISSIONS.DEPARTMENTS_UPDATE_STATUS)
   async updateStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: UpdateStatusDto,
@@ -31,8 +34,8 @@ export class DepartmentsController {
     return this.departmentsService.updateStatus(id, body.status);
   }
 
-  // PATCH /departments/:id/toggle-status
   @Patch(':id/toggle-status')
+  @RequirePermissions(PERMISSIONS.DEPARTMENTS_UPDATE_STATUS)
   async toggleStatus(@Param('id', ParseIntPipe) id: number) {
     return this.departmentsService.toggleStatus(id);
   }
@@ -42,26 +45,44 @@ export class DepartmentsController {
 
 
 // // src/departments/departments.controller.ts
-// import { Body, Controller, Get, Patch, Param, ParseIntPipe, Query, Post } from '@nestjs/common';
+
+// import {
+//   Body,
+//   Controller,
+//   Get,
+//   Patch,
+//   Param,
+//   ParseIntPipe,
+//   Query,
+//   Post,
+//   UseGuards,
+// } from '@nestjs/common';
 // import { DepartmentsService } from './departments.service';
 // import { UpdateStatusDto } from './dto/update-status.dto';
+// import { CreateDepartmentDto } from './dto/create-department.dto';
+// import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+// import { RolesGuard } from 'src/auth/roles.guard';
+// import { Roles } from 'src/auth/roles.decorator';
 
+// @UseGuards(JwtAuthGuard, RolesGuard)
 // @Controller('departments')
 // export class DepartmentsController {
 //   constructor(private readonly departmentsService: DepartmentsService) {}
 
-//   /**
-//    * GET /departments?status=Active
-//    */
+//   // قراءة: متاح لأي USER
 //   @Get()
 //   async findAll(@Query('status') status?: string) {
 //     return this.departmentsService.findAll({ status });
 //   }
 
-//   /**
-//    * PATCH /departments/:id/status
-//    * body: { status: "Active" | "Inactive" }
-//    */
+//   // إنشاء/تعديل: ADMIN فقط
+//   @Roles('ADMIN')
+//   @Post()
+//   async create(@Body() body: CreateDepartmentDto) {
+//     return this.departmentsService.create(body);
+//   }
+
+//   @Roles('ADMIN')
 //   @Patch(':id/status')
 //   async updateStatus(
 //     @Param('id', ParseIntPipe) id: number,
@@ -70,14 +91,10 @@ export class DepartmentsController {
 //     return this.departmentsService.updateStatus(id, body.status);
 //   }
 
-//   /**
-//    * (اختياري) PATCH /departments/:id/toggle-status
-//    * لا يحتاج Body — يقلب الحالة مباشرة
-//    */
+//   @Roles('ADMIN')
 //   @Patch(':id/toggle-status')
 //   async toggleStatus(@Param('id', ParseIntPipe) id: number) {
 //     return this.departmentsService.toggleStatus(id);
 //   }
 // }
-
 

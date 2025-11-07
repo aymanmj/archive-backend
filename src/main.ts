@@ -128,6 +128,8 @@ async function bootstrap() {
   logger.log(`📂 Serving uploads from ${UPLOAD_ROOT} at /files/`);
 }
 
+console.log('DATABASE_URL =>', process.env.DATABASE_URL);
+
 bootstrap();
 
 

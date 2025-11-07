@@ -1,4 +1,3 @@
-// src/files/files.controller.ts
 import {
   BadRequestException,
   Controller,
@@ -11,6 +10,8 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { RequirePermissions } from 'src/auth/permissions.decorator';
+import { PERMISSIONS } from 'src/auth/permissions.constants';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { diskStorage } from 'multer';
@@ -23,7 +24,6 @@ function destFor(docId: bigint | number) {
   const d = new Date();
   const y = String(d.getFullYear());
   const m = String(d.getMonth() + 1).padStart(2, '0');
-  // uploads/YYYY/MM/documentId/
   const dir = join(UPLOAD_ROOT, y, m, String(docId));
   ensureDir(dir);
   return dir;
@@ -34,7 +34,7 @@ function sha256OfFile(fullPath: string): Promise<string> {
     const h = crypto.createHash('sha256');
     const s = fs.createReadStream(fullPath);
     s.on('error', reject);
-    s.on('data', chunk => h.update(chunk));
+    s.on('data', (chunk) => h.update(chunk));
     s.on('end', () => resolve(h.digest('hex')));
   });
 }
@@ -44,8 +44,8 @@ function sha256OfFile(fullPath: string): Promise<string> {
 export class FilesController {
   constructor(private prisma: PrismaService) {}
 
-  /** GET /documents/:id/files — أحدث الإصدارات */
   @Get(':id/files')
+  @RequirePermissions(PERMISSIONS.FILES_READ)
   async list(@Param('id') id: string) {
     const docId = BigInt(id as any);
     const files = await this.prisma.documentFile.findMany({
@@ -72,8 +72,8 @@ export class FilesController {
     }));
   }
 
-  /** POST /documents/:id/files — رفع ملف واحد (multipart field: "file") */
   @Post(':id/files')
+  @RequirePermissions(PERMISSIONS.FILES_UPLOAD)
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({
@@ -98,11 +98,8 @@ export class FilesController {
   async upload(@Param('id') id: string, @UploadedFile() file?: Express.Multer.File) {
     if (!file) throw new BadRequestException('No file provided');
     const docId = BigInt(id as any);
-
-    // ✅ احسب الـ SHA-256 من الملف المحفوظ على القرص
     const checksum = await sha256OfFile(file.path);
 
-    // اجلب أعلى إصدار حالي واجعله غير latest
     const latest = await this.prisma.documentFile.findFirst({
       where: { documentId: docId, isLatestVersion: true },
       orderBy: { versionNumber: 'desc' },
@@ -116,7 +113,6 @@ export class FilesController {
       });
     }
 
-    // احفظ المسار النسبي داخل uploads
     const relative = file.path.replace(UPLOAD_ROOT, '').replace(/^[\\/]/, '');
 
     const saved = await this.prisma.documentFile.create({
@@ -129,7 +125,7 @@ export class FilesController {
         checksumHash: checksum,
         versionNumber: nextVersion,
         isLatestVersion: true,
-        uploadedByUserId: (file as any).userId ?? 1, // أو من req.user لاحقًا
+        uploadedByUserId: (file as any).userId ?? 1,
       },
       select: {
         id: true,
@@ -153,15 +149,14 @@ export class FilesController {
     };
   }
 
-  /** DELETE /documents/files/:fileId — حذف ملف */
   @Delete('files/:fileId')
+  @RequirePermissions(PERMISSIONS.FILES_DELETE)
   async remove(@Param('fileId') fileId: string) {
     const idNum = BigInt(fileId as any);
     const f = await this.prisma.documentFile.findUnique({ where: { id: idNum } });
     if (!f) throw new BadRequestException('File not found');
 
     await this.prisma.documentFile.delete({ where: { id: idNum } });
-    // (اختياري) حذف الملف من القرص إن رغبت
     return { ok: true };
   }
 }
@@ -169,7 +164,7 @@ export class FilesController {
 
 
 
-
+// // src/files/files.controller.ts
 
 // import {
 //   BadRequestException,
@@ -181,31 +176,45 @@ export class FilesController {
 //   UploadedFile,
 //   UseGuards,
 //   UseInterceptors,
+//   Req,
 // } from '@nestjs/common';
 // import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+// import { RolesGuard } from 'src/auth/roles.guard';
+// import { Roles } from 'src/auth/roles.decorator';
 // import { PrismaService } from 'src/prisma/prisma.service';
 // import { FileInterceptor } from '@nestjs/platform-express';
 // import { diskStorage } from 'multer';
 // import { extname, join } from 'path';
 // import { ensureDir, UPLOAD_ROOT } from 'src/common/storage';
+// import * as fs from 'fs';
 // import * as crypto from 'crypto';
 
 // function destFor(docId: bigint | number) {
 //   const d = new Date();
 //   const y = String(d.getFullYear());
 //   const m = String(d.getMonth() + 1).padStart(2, '0');
-//   // uploads/YY/MM/documentId/
+//   // uploads/YYYY/MM/documentId/
 //   const dir = join(UPLOAD_ROOT, y, m, String(docId));
 //   ensureDir(dir);
 //   return dir;
 // }
 
-// @UseGuards(JwtAuthGuard)
+// function sha256OfFile(fullPath: string): Promise<string> {
+//   return new Promise((resolve, reject) => {
+//     const h = crypto.createHash('sha256');
+//     const s = fs.createReadStream(fullPath);
+//     s.on('error', reject);
+//     s.on('data', (chunk) => h.update(chunk));
+//     s.on('end', () => resolve(h.digest('hex')));
+//   });
+// }
+
+// @UseGuards(JwtAuthGuard, RolesGuard)
 // @Controller('documents')
 // export class FilesController {
 //   constructor(private prisma: PrismaService) {}
 
-//   /** GET /documents/:id/files — أحدث الإصدارات */
+//   /** GET /documents/:id/files — أحدث الإصدارات (متاح لأي USER) */
 //   @Get(':id/files')
 //   async list(@Param('id') id: string) {
 //     const docId = BigInt(id as any);
@@ -225,7 +234,7 @@ export class FilesController {
 //     return files.map((f) => ({
 //       id: String(f.id),
 //       fileNameOriginal: f.fileNameOriginal,
-//       fileUrl: `/files/${f.storagePath}`, // سيُقدّم عبر static
+//       fileUrl: `/files/${f.storagePath.replace(/\\/g, '/')}`,
 //       fileExtension: f.fileExtension,
 //       fileSizeBytes: Number(f.fileSizeBytes),
 //       uploadedAt: f.uploadedAt,
@@ -233,7 +242,8 @@ export class FilesController {
 //     }));
 //   }
 
-//   /** POST /documents/:id/files — رفع ملف واحد (multipart field: "file") */
+//   /** POST /documents/:id/files — رفع ملف (ADMIN/MANAGER) */
+//   @Roles('ADMIN', 'MANAGER')
 //   @Post(':id/files')
 //   @UseInterceptors(
 //     FileInterceptor('file', {
@@ -250,29 +260,25 @@ export class FilesController {
 //         filename: (req, file, cb) => {
 //           const name = file.originalname.replace(/\s+/g, '_');
 //           const stamp = Date.now();
-//           const ext = extname(name);
-//           cb(null, `${stamp}_${name}`); // اسم ملف فريد
+//           cb(null, `${stamp}_${name}`);
 //         },
 //       }),
-//       limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
+//       limits: { fileSize: 50 * 1024 * 1024 },
 //     }),
 //   )
-//   async upload(@Param('id') id: string, @UploadedFile() file?: Express.Multer.File) {
+//   async upload(@Param('id') id: string, @UploadedFile() file?: Express.Multer.File, @Req() req?: any) {
 //     if (!file) throw new BadRequestException('No file provided');
 //     const docId = BigInt(id as any);
 
-//     // حساب checksum
-//     const sha256 = crypto.createHash('sha256').update(file.buffer ?? '').digest('hex');
+//     const checksum = await sha256OfFile(file.path);
 
-//     // اجلب أعلى إصدار حالي واجعله غير latest
+//     // اجعل السابق ليس latest
 //     const latest = await this.prisma.documentFile.findFirst({
 //       where: { documentId: docId, isLatestVersion: true },
 //       orderBy: { versionNumber: 'desc' },
 //       select: { id: true, versionNumber: true },
 //     });
-
 //     const nextVersion = (latest?.versionNumber ?? 0) + 1;
-
 //     if (latest) {
 //       await this.prisma.documentFile.update({
 //         where: { id: latest.id },
@@ -280,7 +286,6 @@ export class FilesController {
 //       });
 //     }
 
-//     // احفظ المسار النسبي داخل uploads
 //     const relative = file.path.replace(UPLOAD_ROOT, '').replace(/^[\\/]/, '');
 
 //     const saved = await this.prisma.documentFile.create({
@@ -290,10 +295,10 @@ export class FilesController {
 //         storagePath: relative.replace(/\\/g, '/'),
 //         fileExtension: extname(file.originalname).replace('.', '').toLowerCase(),
 //         fileSizeBytes: BigInt(file.size),
-//         checksumHash: sha256,
+//         checksumHash: checksum,
 //         versionNumber: nextVersion,
 //         isLatestVersion: true,
-//         uploadedByUserId:  (file as any).userId ?? 1, // يمكنك تمرير userId من req.user لو أردت
+//         uploadedByUserId: req?.user?.userId ?? 1,
 //       },
 //       select: {
 //         id: true,
@@ -309,7 +314,6 @@ export class FilesController {
 //     return {
 //       id: String(saved.id),
 //       fileNameOriginal: saved.fileNameOriginal,
-//       // fileUrl: `/files/${saved.storagePath}`,
 //       fileUrl: `/files/${saved.storagePath.replace(/\\/g, '/')}`,
 //       fileExtension: saved.fileExtension,
 //       fileSizeBytes: Number(saved.fileSizeBytes),
@@ -318,7 +322,8 @@ export class FilesController {
 //     };
 //   }
 
-//   /** DELETE /documents/files/:fileId — حذف ملف */
+//   /** DELETE /documents/files/:fileId — حذف ملف (ADMIN/MANAGER) */
+//   @Roles('ADMIN', 'MANAGER')
 //   @Delete('files/:fileId')
 //   async remove(@Param('fileId') fileId: string) {
 //     const idNum = BigInt(fileId as any);
@@ -326,11 +331,8 @@ export class FilesController {
 //     if (!f) throw new BadRequestException('File not found');
 
 //     await this.prisma.documentFile.delete({ where: { id: idNum } });
-//     // (اختياري) يمكنك حذف الملف من القرص هنا أيضًا إن رغبت
-
 //     return { ok: true };
 //   }
 // }
-
 
 

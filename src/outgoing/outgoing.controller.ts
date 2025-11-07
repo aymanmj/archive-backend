@@ -3,13 +3,14 @@ import {
   Body,
   Controller,
   Get,
-  NotFoundException,
   Param,
   Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+import { RequirePermissions } from 'src/auth/permissions.decorator';
+import { PERMISSIONS } from 'src/auth/permissions.constants';
 import { OutgoingService } from './outgoing.service';
 import { DeliveryMethod } from '@prisma/client';
 
@@ -18,23 +19,16 @@ import { DeliveryMethod } from '@prisma/client';
 export class OutgoingController {
   constructor(private readonly outgoingService: OutgoingService) {}
 
-  /**
-   * GET /outgoing/my-latest?page=1&pageSize=20
-   */
   @Get('my-latest')
-  async myLatest(
-    @Query('page') page?: string,
-    @Query('pageSize') pageSize?: string,
-  ) {
+  @RequirePermissions(PERMISSIONS.OUTGOING_READ)
+  async myLatest(@Query('page') page?: string, @Query('pageSize') pageSize?: string) {
     const p = Math.max(1, Number(page) || 1);
     const ps = Math.min(100, Number(pageSize) || 20);
     return this.outgoingService.getLatestOutgoing(p, ps);
   }
 
-  /**
-   * GET /outgoing/search?page=&pageSize=&q=&from=&to=
-   */
   @Get('search')
+  @RequirePermissions(PERMISSIONS.OUTGOING_READ)
   async search(
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
@@ -51,27 +45,20 @@ export class OutgoingController {
     });
   }
 
-  /**
-   * GET /outgoing/stats/overview
-   */
   @Get('stats/overview')
+  @RequirePermissions(PERMISSIONS.OUTGOING_READ)
   async statsOverview() {
     return this.outgoingService.statsOverview();
   }
 
-  /**
-   * GET /outgoing/:id
-   */
   @Get(':id')
+  @RequirePermissions(PERMISSIONS.OUTGOING_READ)
   async getOne(@Param('id') id: string) {
     return this.outgoingService.getOne(id);
   }
 
-  /**
-   * POST /outgoing
-   * body: { documentTitle, owningDepartmentId, externalPartyName, sendMethod, issueDate?, signedByUserId }
-   */
   @Post()
+  @RequirePermissions(PERMISSIONS.OUTGOING_CREATE)
   async create(@Body() body: any) {
     const {
       documentTitle,
@@ -107,34 +94,26 @@ export class OutgoingController {
         issueDate: issueDate ? String(issueDate) : undefined,
         signedByUserId: Number(signedByUserId),
       },
-      // يُمكن تمرير المستخدم الحقيقي من req.user لاحقًا إن رغبت
       undefined,
     );
   }
 
-  /**
-   * POST /outgoing/:id/delivered
-   * body: { delivered: boolean, proofPath?: string | null }
-   */
   @Post(':id/delivered')
+  @RequirePermissions(PERMISSIONS.OUTGOING_MARK_DELIVERED)
   async markDelivered(@Param('id') id: string, @Body() body: any) {
     const delivered = !!body?.delivered;
     const proofPath = body?.proofPath ?? null;
     return this.outgoingService.markDelivered(id, delivered, proofPath);
   }
 
-  // GET /outgoing/stats/daily?days=30
   @Get('stats/daily')
+  @RequirePermissions(PERMISSIONS.OUTGOING_READ)
   async daily(@Query('days') days?: string) {
     return this.outgoingService.dailySeries(Number(days) || 30);
   }
-
 }
 
 
-
-
-// // src/outgoing/outgoing.controller.ts
 
 // import {
 //   BadRequestException,
@@ -142,23 +121,30 @@ export class OutgoingController {
 //   Controller,
 //   Get,
 //   Param,
-//   Patch,
 //   Post,
 //   Query,
-//   Req,
 //   UseGuards,
 // } from '@nestjs/common';
-// import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+//   import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+// import { RolesGuard } from 'src/auth/roles.guard';
+// import { Roles } from 'src/auth/roles.decorator';
 // import { OutgoingService } from './outgoing.service';
+// import { DeliveryMethod } from '@prisma/client';
 
-// @UseGuards(JwtAuthGuard)
+// @UseGuards(JwtAuthGuard, RolesGuard)
 // @Controller('outgoing')
 // export class OutgoingController {
 //   constructor(private readonly outgoingService: OutgoingService) {}
 
+//   // قراءة للمستخدمين
 //   @Get('my-latest')
-//   async latest(@Query('page') page?: string, @Query('pageSize') pageSize?: string) {
-//     return this.outgoingService.getLatest(Number(page) || 1, Math.min(Number(pageSize) || 20, 100));
+//   async myLatest(
+//     @Query('page') page?: string,
+//     @Query('pageSize') pageSize?: string,
+//   ) {
+//     const p = Math.max(1, Number(page) || 1);
+//     const ps = Math.min(100, Number(pageSize) || 20);
+//     return this.outgoingService.getLatestOutgoing(p, ps);
 //   }
 
 //   @Get('search')
@@ -170,8 +156,8 @@ export class OutgoingController {
 //     @Query('to') to?: string,
 //   ) {
 //     return this.outgoingService.search({
-//       page: Number(page) || 1,
-//       pageSize: Math.min(Number(pageSize) || 20, 100),
+//       page: Math.max(1, Number(page) || 1),
+//       pageSize: Math.min(100, Number(pageSize) || 20),
 //       q: (q ?? '').trim(),
 //       from,
 //       to,
@@ -179,38 +165,69 @@ export class OutgoingController {
 //   }
 
 //   @Get('stats/overview')
-//   async stats(@Query('from') from?: string, @Query('to') to?: string) {
-//     return this.outgoingService.statsOverview({ from, to });
+//   async statsOverview() {
+//     return this.outgoingService.statsOverview();
 //   }
 
 //   @Get(':id')
-//   async details(@Param('id') id: string) {
-//     if (!id) throw new BadRequestException('id required');
+//   async getOne(@Param('id') id: string) {
 //     return this.outgoingService.getOne(id);
 //   }
 
+//   // إنشاء/تحديثات حسّاسة: ADMIN أو MANAGER
+//   @Roles('ADMIN', 'MANAGER')
 //   @Post()
-//   async create(@Body() body: any, @Req() req: any) {
-//     const { documentTitle, owningDepartmentId, externalPartyName, sendMethod, signedByUserId } = body ?? {};
-//     if (!documentTitle || !String(documentTitle).trim()) throw new BadRequestException('documentTitle required');
-//     if (!owningDepartmentId || isNaN(Number(owningDepartmentId))) throw new BadRequestException('owningDepartmentId required');
-//     if (!externalPartyName || !String(externalPartyName).trim()) throw new BadRequestException('externalPartyName required');
-//     if (!sendMethod || !String(sendMethod).trim()) throw new BadRequestException('sendMethod required');
+//   async create(@Body() body: any) {
+//     const {
+//       documentTitle,
+//       owningDepartmentId,
+//       externalPartyName,
+//       sendMethod,
+//       issueDate,
+//       signedByUserId,
+//     } = body ?? {};
 
-//     return this.outgoingService.createOutgoing({
-//       documentTitle: String(documentTitle).trim(),
-//       owningDepartmentId: Number(owningDepartmentId),
-//       externalPartyName: String(externalPartyName).trim(),
-//       sendMethod: String(sendMethod),
-//       signedByUserId: Number(signedByUserId ?? req.user?.id),
-//       creatorUserId: Number(req.user?.id),
-//     });
+//     if (!documentTitle || !String(documentTitle).trim()) {
+//       throw new BadRequestException('documentTitle is required');
+//     }
+//     if (!owningDepartmentId || isNaN(Number(owningDepartmentId))) {
+//       throw new BadRequestException('owningDepartmentId is required');
+//     }
+//     if (!externalPartyName || !String(externalPartyName).trim()) {
+//       throw new BadRequestException('externalPartyName is required');
+//     }
+//     if (!sendMethod || !Object.values(DeliveryMethod).includes(sendMethod)) {
+//       throw new BadRequestException('sendMethod is invalid');
+//     }
+//     if (!signedByUserId || isNaN(Number(signedByUserId))) {
+//       throw new BadRequestException('signedByUserId is required');
+//     }
+
+//     return this.outgoingService.createOutgoing(
+//       {
+//         documentTitle: String(documentTitle).trim(),
+//         owningDepartmentId: Number(owningDepartmentId),
+//         externalPartyName: String(externalPartyName).trim(),
+//         sendMethod: sendMethod as DeliveryMethod,
+//         issueDate: issueDate ? String(issueDate) : undefined,
+//         signedByUserId: Number(signedByUserId),
+//       },
+//       undefined,
+//     );
 //   }
 
-//   // علامة تم التسليم (proof اختياري)
-//   @Patch(':id/delivered')
-//   async markDelivered(@Param('id') id: string, @Body() body: { deliveryProofPath?: string }) {
-//     return this.outgoingService.markDelivered(id, body.deliveryProofPath);
+//   @Roles('ADMIN', 'MANAGER')
+//   @Post(':id/delivered')
+//   async markDelivered(@Param('id') id: string, @Body() body: any) {
+//     const delivered = !!body?.delivered;
+//     const proofPath = body?.proofPath ?? null;
+//     return this.outgoingService.markDelivered(id, delivered, proofPath);
+//   }
+
+//   @Get('stats/daily')
+//   async daily(@Query('days') days?: string) {
+//     return this.outgoingService.dailySeries(Number(days) || 30);
 //   }
 // }
+
 
