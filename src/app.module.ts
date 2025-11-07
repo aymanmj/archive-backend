@@ -9,6 +9,7 @@ import { IncomingModule } from './incoming/incoming.module';
 import { OutgoingModule } from './outgoing/outgoing.module';
 import { FilesModule } from './files/files.module';
 import { AuditModule } from './audit/audit.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 import { HealthController } from './health/health.controller';
 
 @Module({
@@ -21,6 +22,7 @@ import { HealthController } from './health/health.controller';
     IncomingModule,
     OutgoingModule,
     FilesModule,
+    DashboardModule,
   ],
   controllers: [AppController, HealthController],
   providers: [AppService],
