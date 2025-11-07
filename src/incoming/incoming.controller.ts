@@ -11,7 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
-import { RequirePermissions } from 'src/auth/permissions.decorator';
+import { Permissions } from 'src/auth/permissions.decorator';
 import { PERMISSIONS } from 'src/auth/permissions.constants';
 import { IncomingService } from './incoming.service';
 
@@ -21,7 +21,7 @@ export class IncomingController {
   constructor(private readonly incomingService: IncomingService) {}
 
   @Get('my-latest')
-  @RequirePermissions(PERMISSIONS.INCOMING_READ)
+  @Permissions(PERMISSIONS.INCOMING_READ)
   async getLatestIncoming(
     @Query('page') page: number,
     @Query('pageSize') pageSize: number,
@@ -30,7 +30,7 @@ export class IncomingController {
   }
 
   @Get('my-desk')
-  @RequirePermissions(PERMISSIONS.INCOMING_READ)
+  @Permissions(PERMISSIONS.INCOMING_READ)
   async myDesk(
     @Req() req: any,
     @Query('page') page?: string,
@@ -57,7 +57,7 @@ export class IncomingController {
   }
 
   @Get('search')
-  @RequirePermissions(PERMISSIONS.INCOMING_READ)
+  @Permissions(PERMISSIONS.INCOMING_READ)
   async search(
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
@@ -75,25 +75,25 @@ export class IncomingController {
   }
 
   @Get('stats/overview')
-  @RequirePermissions(PERMISSIONS.INCOMING_READ)
+  @Permissions(PERMISSIONS.INCOMING_READ)
   async statsOverview(@Req() req: any) {
     return this.incomingService.statsOverview(req.user);
   }
 
   @Get(':id')
-  @RequirePermissions(PERMISSIONS.INCOMING_READ)
+  @Permissions(PERMISSIONS.INCOMING_READ)
   async details(@Param('id') id: string) {
     return this.incomingService.getIncomingDetails(id);
   }
 
   @Get(':id/timeline')
-  @RequirePermissions(PERMISSIONS.INCOMING_READ)
+  @Permissions(PERMISSIONS.INCOMING_READ)
   async timeline(@Param('id') id: string) {
     return this.incomingService.getTimeline(id);
   }
 
   @Post()
-  @RequirePermissions(PERMISSIONS.INCOMING_CREATE)
+  @Permissions(PERMISSIONS.INCOMING_CREATE)
   async createQuickIncoming(@Body() body: any, @Req() req: any) {
     const {
       documentTitle,
@@ -127,7 +127,7 @@ export class IncomingController {
   }
 
   @Post(':id/forward')
-  @RequirePermissions(PERMISSIONS.INCOMING_FORWARD)
+  @Permissions(PERMISSIONS.INCOMING_FORWARD)
   async forward(@Param('id') id: string, @Body() body: any, @Req() req: any) {
     const payload = {
       targetDepartmentId: Number(body?.targetDepartmentId),
@@ -145,7 +145,7 @@ export class IncomingController {
   }
 
   @Patch('distributions/:distId/status')
-  @RequirePermissions(PERMISSIONS.INCOMING_UPDATE_STATUS)
+  @Permissions(PERMISSIONS.INCOMING_UPDATE_STATUS)
   async changeDistStatus(
     @Param('distId') distId: string,
     @Body() body: any,
@@ -162,7 +162,7 @@ export class IncomingController {
   }
 
   @Patch('distributions/:distId/assign')
-  @RequirePermissions(PERMISSIONS.INCOMING_ASSIGN)
+  @Permissions(PERMISSIONS.INCOMING_ASSIGN)
   async assignDist(
     @Param('distId') distId: string,
     @Body() body: any,
@@ -180,7 +180,7 @@ export class IncomingController {
   }
 
   @Post('distributions/:distId/notes')
-  @RequirePermissions(PERMISSIONS.INCOMING_UPDATE_STATUS)
+  @Permissions(PERMISSIONS.INCOMING_UPDATE_STATUS)
   async addDistNote(
     @Param('distId') distId: string,
     @Body() body: any,
@@ -192,13 +192,13 @@ export class IncomingController {
   }
 
   @Get('stats/daily')
-  @RequirePermissions(PERMISSIONS.INCOMING_READ)
+  @Permissions(PERMISSIONS.INCOMING_READ)
   async daily(@Query('days') days?: string) {
     return this.incomingService.dailySeries(Number(days) || 30);
   }
 
   @Get('stats/my-desk')
-  @RequirePermissions(PERMISSIONS.INCOMING_READ)
+  @Permissions(PERMISSIONS.INCOMING_READ)
   async myDeskStatus(@Req() req: any) {
     return this.incomingService.myDeskStatus(req.user);
   }

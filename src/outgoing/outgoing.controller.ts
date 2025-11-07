@@ -9,7 +9,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
-import { RequirePermissions } from 'src/auth/permissions.decorator';
+import { Permissions } from 'src/auth/permissions.decorator';
 import { PERMISSIONS } from 'src/auth/permissions.constants';
 import { OutgoingService } from './outgoing.service';
 import { DeliveryMethod } from '@prisma/client';
@@ -20,7 +20,7 @@ export class OutgoingController {
   constructor(private readonly outgoingService: OutgoingService) {}
 
   @Get('my-latest')
-  @RequirePermissions(PERMISSIONS.OUTGOING_READ)
+  @Permissions(PERMISSIONS.OUTGOING_READ)
   async myLatest(@Query('page') page?: string, @Query('pageSize') pageSize?: string) {
     const p = Math.max(1, Number(page) || 1);
     const ps = Math.min(100, Number(pageSize) || 20);
@@ -28,7 +28,7 @@ export class OutgoingController {
   }
 
   @Get('search')
-  @RequirePermissions(PERMISSIONS.OUTGOING_READ)
+  @Permissions(PERMISSIONS.OUTGOING_READ)
   async search(
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
@@ -46,19 +46,19 @@ export class OutgoingController {
   }
 
   @Get('stats/overview')
-  @RequirePermissions(PERMISSIONS.OUTGOING_READ)
+  @Permissions(PERMISSIONS.OUTGOING_READ)
   async statsOverview() {
     return this.outgoingService.statsOverview();
   }
 
   @Get(':id')
-  @RequirePermissions(PERMISSIONS.OUTGOING_READ)
+  @Permissions(PERMISSIONS.OUTGOING_READ)
   async getOne(@Param('id') id: string) {
     return this.outgoingService.getOne(id);
   }
 
   @Post()
-  @RequirePermissions(PERMISSIONS.OUTGOING_CREATE)
+  @Permissions(PERMISSIONS.OUTGOING_CREATE)
   async create(@Body() body: any) {
     const {
       documentTitle,
@@ -99,7 +99,7 @@ export class OutgoingController {
   }
 
   @Post(':id/delivered')
-  @RequirePermissions(PERMISSIONS.OUTGOING_MARK_DELIVERED)
+  @Permissions(PERMISSIONS.OUTGOING_MARK_DELIVERED)
   async markDelivered(@Param('id') id: string, @Body() body: any) {
     const delivered = !!body?.delivered;
     const proofPath = body?.proofPath ?? null;
@@ -107,7 +107,7 @@ export class OutgoingController {
   }
 
   @Get('stats/daily')
-  @RequirePermissions(PERMISSIONS.OUTGOING_READ)
+  @Permissions(PERMISSIONS.OUTGOING_READ)
   async daily(@Query('days') days?: string) {
     return this.outgoingService.dailySeries(Number(days) || 30);
   }
