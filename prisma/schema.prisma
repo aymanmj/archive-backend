@@ -1,5 +1,5 @@
 // =========================
-// schema.prisma (v1.1)
+// schema.prisma (v1.2)
 // =========================
 
 generator client {
@@ -69,7 +69,7 @@ model Department {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  // Soft delete (اختياري للواقعية المؤسسية)
+  // Soft delete
   isDeleted       Boolean   @default(false)
   deletedAt       DateTime?
   deletedByUserId Int?
@@ -112,7 +112,7 @@ model User {
   WorkflowStepAction            WorkflowStepAction[]
   logsUpdatedByMe               IncomingDistributionLog[] @relation("LogsUpdatedByUser")
 
-  // <-- الحقل العكسي لعلاقة الـ currentAssignee
+  // العكسي لعلاقة currentAssignee
   workflowAssignedInstances WorkflowInstance[] @relation("WorkflowInstanceCurrentAssignee")
 
   @@index([departmentId])
@@ -162,6 +162,9 @@ model Document {
   createdByUserId    Int
   owningDepartmentId Int
 
+  // [NEW] ناقل البحث FTS
+  searchVector Unsupported("tsvector")?
+
   AuditTrail       AuditTrail[]
   createdByUser    User               @relation("UserCreatedDocuments", fields: [createdByUserId], references: [id], onDelete: Restrict)
   documentType     DocumentType       @relation(fields: [documentTypeId], references: [id], onDelete: Restrict)
@@ -173,12 +176,14 @@ model Document {
   incomingRecord   IncomingRecord?
   OutgoingRecord   OutgoingRecord?
   WorkflowInstance WorkflowInstance[]
+  OCRText          OCRText[]          // [NEW] نصوص OCR
 
   @@index([currentStatus])
   @@index([owningDepartmentId])
   @@index([createdAt])
   @@index([securityLevelId])
   @@index([documentTypeId])
+  @@index([searchVector], type: Gin)  // [NEW] فهرس GIN على الناقل
 }
 
 model DocumentFile {
@@ -211,7 +216,7 @@ model ExternalParty {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  // Soft delete (اختياري)
+  // Soft delete
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
 
@@ -251,7 +256,7 @@ model IncomingDistribution {
   assignedToUserId   Int?
   status             DistributionStatus @default(Open)
   notes              String?
-  lastUpdateAt       DateTime           @default(now()) // سنحدثه بالكود مع كل Log
+  lastUpdateAt       DateTime           @default(now())
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
@@ -277,12 +282,17 @@ model AuditTrail {
   fromIP            String?
   workstationName   String?
 
+  // [NEW] تتبع الطلب
+  requestId     String?
+  correlationId String?
+
   Document Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
   User     User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([documentId])
   @@index([userId])
   @@index([actionAt])
+  @@index([correlationId]) // [NEW]
 }
 
 model DocumentMetadata {
@@ -339,10 +349,12 @@ model OutgoingRecord {
 }
 
 model Role {
-  id          Int        @id @default(autoincrement())
-  roleName    String     @unique
+  id          Int            @id @default(autoincrement())
+  roleName    String         @unique
   description String?
   UserRole    UserRole[]
+  // [NEW]
+  RolePermission RolePermission[]
 }
 
 model UserRole {
@@ -418,11 +430,48 @@ model IncomingDistributionLog {
   @@index([updatedByUserId])
 }
 
-
 model NumberSequence {
   id         Int    @id @default(autoincrement())
-  scope      String @unique     // مثال: "INCOMING_2025", "OUTGOING_2025"
+  scope      String @unique
   lastNumber Int    @default(0)
 
   @@index([scope])
+}
+
+// =========================
+// [NEW] OCR Text for FTS
+// =========================
+model OCRText {
+  id         BigInt   @id @default(autoincrement())
+  documentId BigInt
+  textContent String
+  language    String?
+  createdAt   DateTime @default(now())
+
+  Document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+}
+
+// =========================
+// [NEW] RBAC granular
+// =========================
+model Permission {
+  id          Int               @id @default(autoincrement())
+  code        String            @unique
+  description String?
+  RolePermission RolePermission[]
+}
+
+model RolePermission {
+  id           Int        @id @default(autoincrement())
+  roleId       Int
+  permissionId Int
+
+  Role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  Permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@index([roleId])
+  @@index([permissionId])
 }

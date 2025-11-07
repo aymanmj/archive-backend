@@ -1,3 +1,7 @@
+// =========================
+// schema.prisma (v1.1)
+// =========================
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -7,42 +11,113 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ============ Enums ============
+
+enum DocumentStatus {
+  Draft
+  Registered
+  UnderReview
+  Completed
+  Archived
+  Rejected
+}
+
+enum DistributionStatus {
+  Open
+  InProgress
+  Closed
+  Escalated
+}
+
+enum WorkflowStatus {
+  InProgress
+  Completed
+  Cancelled
+}
+
+enum WorkflowActionType {
+  REVIEWED
+  FORWARDED
+  APPROVED
+  REJECTED
+  COMMENT
+}
+
+enum DeliveryMethod {
+  Hand
+  Mail
+  Email
+  Courier
+  Fax
+  ElectronicSystem
+}
+
+enum UrgencyLevel {
+  Low
+  Normal
+  High
+  Urgent
+}
+
+// ============ Models ============
+
 model Department {
-  id                    Int                    @id @default(autoincrement())
-  name                  String
-  status                String                 @default("Active")
-  parentDepartmentId    Int?
-  createdAt             DateTime               @default(now())
-  updatedAt             DateTime
-  parentDepartment      Department?            @relation("DepartmentHierarchy", fields: [parentDepartmentId], references: [id])
+  id                 Int      @id @default(autoincrement())
+  name               String
+  status             String   @default("Active")
+  parentDepartmentId Int?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  // Soft delete (اختياري للواقعية المؤسسية)
+  isDeleted       Boolean   @default(false)
+  deletedAt       DateTime?
+  deletedByUserId Int?
+
+  parentDepartment      Department?            @relation("DepartmentHierarchy", fields: [parentDepartmentId], references: [id], onDelete: SetNull)
   subDepartments        Department[]           @relation("DepartmentHierarchy")
   owningDocuments       Document[]             @relation("OwningDepartment")
   incomingDistributions IncomingDistribution[] @relation("IncomingTargetDept")
   users                 User[]
+
+  @@index([status])
+  @@index([parentDepartmentId])
 }
 
 model User {
-  id                            Int                    @id @default(autoincrement())
-  fullName                      String
-  jobTitle                      String?
-  email                         String?                @unique
-  username                      String                 @unique
-  passwordHash                  String
-  isActive                      Boolean                @default(true)
-  departmentId                  Int?
-  createdAt                     DateTime               @default(now())
-  lastLoginAt                   DateTime?
+  id                    Int       @id @default(autoincrement())
+  fullName              String
+  jobTitle              String?
+  email                 String?   @unique
+  username              String    @unique
+  passwordHash          String
+  isActive              Boolean   @default(true)
+  departmentId          Int?
+  securityClearanceRank Int       @default(0)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  lastLoginAt           DateTime?
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+
   AuditTrail                    AuditTrail[]
-  documentsCreated              Document[]             @relation("UserCreatedDocuments")
-  uploadedFiles                 DocumentFile[]         @relation("UserUploadedFiles")
-  assignedIncomingDistributions IncomingDistribution[] @relation("AssignedIncomingDistributions")
-  incomingReceived              IncomingRecord[]       @relation("UserReceivedIncoming")
+  documentsCreated              Document[]                @relation("UserCreatedDocuments")
+  uploadedFiles                 DocumentFile[]            @relation("UserUploadedFiles")
+  assignedIncomingDistributions IncomingDistribution[]    @relation("AssignedIncomingDistributions")
+  incomingReceived              IncomingRecord[]          @relation("UserReceivedIncoming")
   OutgoingRecord                OutgoingRecord[]
-  department                    Department?            @relation(fields: [departmentId], references: [id])
+  department                    Department?               @relation(fields: [departmentId], references: [id], onDelete: SetNull)
   UserRole                      UserRole[]
   WorkflowStepAction            WorkflowStepAction[]
-
   logsUpdatedByMe               IncomingDistributionLog[] @relation("LogsUpdatedByUser")
+
+  // <-- الحقل العكسي لعلاقة الـ currentAssignee
+  workflowAssignedInstances WorkflowInstance[] @relation("WorkflowInstanceCurrentAssignee")
+
+  @@index([departmentId])
+  @@index([securityClearanceRank])
+  @@index([isActive])
 }
 
 model SecurityLevel {
@@ -51,6 +126,9 @@ model SecurityLevel {
   description String?
   rankOrder   Int
   documents   Document[]
+
+  @@unique([rankOrder])
+  @@index([levelName])
 }
 
 model DocumentType {
@@ -61,35 +139,46 @@ model DocumentType {
   isInternalMemo Boolean    @default(false)
   description    String?
   documents      Document[]
+
+  @@unique([typeName])
+  @@index([isIncomingType])
+  @@index([isOutgoingType])
+  @@index([isInternalMemo])
 }
 
 model Document {
-  id                   BigInt             @id @default(autoincrement())
+  id                   BigInt         @id @default(autoincrement())
   title                String
   summary              String?
-  currentStatus        String             @default("Draft")
-  isPhysicalCopyExists Boolean            @default(false)
+  currentStatus        DocumentStatus @default(Draft)
+  isPhysicalCopyExists Boolean        @default(false)
   physicalLocation     String?
-  isDeleted            Boolean            @default(false)
-  createdAt            DateTime           @default(now())
-  documentTypeId       Int
-  securityLevelId      Int
-  createdByUserId      Int
-  owningDepartmentId   Int
-  AuditTrail           AuditTrail[]
-  createdByUser        User               @relation("UserCreatedDocuments", fields: [createdByUserId], references: [id])
-  documentType         DocumentType       @relation(fields: [documentTypeId], references: [id])
-  owningDepartment     Department         @relation("OwningDepartment", fields: [owningDepartmentId], references: [id])
-  securityLevel        SecurityLevel      @relation(fields: [securityLevelId], references: [id])
-  files                DocumentFile[]
-  DocumentMetadata     DocumentMetadata[]
-  DocumentTagLink      DocumentTagLink[]
-  incomingRecord       IncomingRecord?
-  OutgoingRecord       OutgoingRecord?
-  WorkflowInstance     WorkflowInstance[]
+  isDeleted            Boolean        @default(false)
+  createdAt            DateTime       @default(now())
+  updatedAt            DateTime       @updatedAt
+
+  documentTypeId     Int
+  securityLevelId    Int
+  createdByUserId    Int
+  owningDepartmentId Int
+
+  AuditTrail       AuditTrail[]
+  createdByUser    User               @relation("UserCreatedDocuments", fields: [createdByUserId], references: [id], onDelete: Restrict)
+  documentType     DocumentType       @relation(fields: [documentTypeId], references: [id], onDelete: Restrict)
+  owningDepartment Department         @relation("OwningDepartment", fields: [owningDepartmentId], references: [id], onDelete: Restrict)
+  securityLevel    SecurityLevel      @relation(fields: [securityLevelId], references: [id], onDelete: Restrict)
+  files            DocumentFile[]
+  DocumentMetadata DocumentMetadata[]
+  DocumentTagLink  DocumentTagLink[]
+  incomingRecord   IncomingRecord?
+  OutgoingRecord   OutgoingRecord?
+  WorkflowInstance WorkflowInstance[]
 
   @@index([currentStatus])
   @@index([owningDepartmentId])
+  @@index([createdAt])
+  @@index([securityLevelId])
+  @@index([documentTypeId])
 }
 
 model DocumentFile {
@@ -104,81 +193,110 @@ model DocumentFile {
   isLatestVersion  Boolean  @default(true)
   uploadedByUserId Int
   uploadedAt       DateTime @default(now())
-  document         Document @relation(fields: [documentId], references: [id])
-  uploadedByUser   User     @relation("UserUploadedFiles", fields: [uploadedByUserId], references: [id])
+
+  document       Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  uploadedByUser User     @relation("UserUploadedFiles", fields: [uploadedByUserId], references: [id], onDelete: Restrict)
+
+  @@unique([documentId, versionNumber])
+  @@index([documentId, isLatestVersion, versionNumber])
+  @@index([checksumHash])
 }
 
 model ExternalParty {
-  id              Int              @id @default(autoincrement())
-  name            String
-  type            String?
-  contactInfo     String?
-  status          String?          @default("Active")
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime
+  id          Int      @id @default(autoincrement())
+  name        String
+  type        String?
+  contactInfo String?
+  status      String?  @default("Active")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Soft delete (اختياري)
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+
   incomingRecords IncomingRecord[]
   OutgoingRecord  OutgoingRecord[]
+
+  @@index([status])
+  @@index([name])
 }
 
 model IncomingRecord {
-  id                 BigInt                 @id @default(autoincrement())
-  documentId         BigInt                 @unique
+  id                 BigInt         @id @default(autoincrement())
+  documentId         BigInt         @unique
   externalPartyId    Int
   receivedDate       DateTime
   receivedByUserId   Int
-  incomingNumber     String                 @unique
-  deliveryMethod     String
-  urgencyLevel       String?
+  incomingNumber     String         @unique
+  deliveryMethod     DeliveryMethod
+  urgencyLevel       UrgencyLevel?
   requiredAction     String?
   dueDateForResponse DateTime?
-  receivedAt         DateTime               @default(now())
-  distributions      IncomingDistribution[]
-  document           Document               @relation(fields: [documentId], references: [id])
-  externalParty      ExternalParty          @relation(fields: [externalPartyId], references: [id])
-  receivedByUser     User                   @relation("UserReceivedIncoming", fields: [receivedByUserId], references: [id])
+  receivedAt         DateTime       @default(now())
+
+  distributions  IncomingDistribution[]
+  document       Document               @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  externalParty  ExternalParty          @relation(fields: [externalPartyId], references: [id], onDelete: Restrict)
+  receivedByUser User                   @relation("UserReceivedIncoming", fields: [receivedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([receivedDate])
+  @@index([externalPartyId])
 }
 
 model IncomingDistribution {
-  id                 BigInt         @id @default(autoincrement())
+  id                 BigInt             @id @default(autoincrement())
   incomingId         BigInt
   targetDepartmentId Int
   assignedToUserId   Int?
-  status             String         @default("Open")
+  status             DistributionStatus @default(Open)
   notes              String?
-  lastUpdateAt       DateTime       @default(now())
-  assignedToUser     User?          @relation("AssignedIncomingDistributions", fields: [assignedToUserId], references: [id])
-  incoming           IncomingRecord @relation(fields: [incomingId], references: [id])
-  targetDepartment   Department     @relation("IncomingTargetDept", fields: [targetDepartmentId], references: [id])
+  lastUpdateAt       DateTime           @default(now()) // سنحدثه بالكود مع كل Log
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 
-  logs               IncomingDistributionLog[]
+  assignedToUser   User?          @relation("AssignedIncomingDistributions", fields: [assignedToUserId], references: [id], onDelete: SetNull)
+  incoming         IncomingRecord @relation(fields: [incomingId], references: [id], onDelete: Restrict)
+  targetDepartment Department     @relation("IncomingTargetDept", fields: [targetDepartmentId], references: [id], onDelete: Restrict)
+
+  logs IncomingDistributionLog[]
 
   @@index([targetDepartmentId])
   @@index([status])
+  @@index([targetDepartmentId, status, lastUpdateAt])
+  @@index([createdAt])
 }
 
 model AuditTrail {
-  id                BigInt    @id @default(autoincrement())
+  id                BigInt   @id @default(autoincrement())
   documentId        BigInt?
   userId            Int?
   actionType        String
   actionDescription String?
-  actionAt          DateTime  @default(now())
+  actionAt          DateTime @default(now())
   fromIP            String?
   workstationName   String?
-  Document          Document? @relation(fields: [documentId], references: [id])
-  User              User?     @relation(fields: [userId], references: [id])
+
+  Document Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
+  User     User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([documentId])
+  @@index([userId])
+  @@index([actionAt])
 }
 
 model DocumentMetadata {
-  id           BigInt   @id @default(autoincrement())
+  id           BigInt  @id @default(autoincrement())
   documentId   BigInt
   metaKey      String
   metaValue    String
-  isSearchable Boolean  @default(true)
-  Document     Document @relation(fields: [documentId], references: [id])
+  isSearchable Boolean @default(true)
+
+  Document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@index([metaKey])
   @@index([metaValue])
+  @@index([documentId, metaKey])
 }
 
 model DocumentTag {
@@ -188,29 +306,36 @@ model DocumentTag {
 }
 
 model DocumentTagLink {
-  id          BigInt      @id @default(autoincrement())
-  documentId  BigInt
-  tagId       Int
-  Document    Document    @relation(fields: [documentId], references: [id])
-  DocumentTag DocumentTag @relation(fields: [tagId], references: [id])
+  id         BigInt @id @default(autoincrement())
+  documentId BigInt
+  tagId      Int
+
+  Document    Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  DocumentTag DocumentTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
   @@unique([documentId, tagId])
+  @@index([tagId])
 }
 
 model OutgoingRecord {
-  id                BigInt        @id @default(autoincrement())
-  documentId        BigInt        @unique
+  id                BigInt         @id @default(autoincrement())
+  documentId        BigInt         @unique
   externalPartyId   Int
-  outgoingNumber    String        @unique
+  outgoingNumber    String         @unique
   issueDate         DateTime
   signedByUserId    Int
-  sendMethod        String
-  isDelivered       Boolean       @default(false)
+  sendMethod        DeliveryMethod
+  isDelivered       Boolean        @default(false)
   deliveryProofPath String?
-  createdAt         DateTime      @default(now())
-  Document          Document      @relation(fields: [documentId], references: [id])
-  ExternalParty     ExternalParty @relation(fields: [externalPartyId], references: [id])
-  User              User          @relation(fields: [signedByUserId], references: [id])
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  Document      Document      @relation(fields: [documentId], references: [id], onDelete: Restrict)
+  ExternalParty ExternalParty @relation(fields: [externalPartyId], references: [id], onDelete: Restrict)
+  User          User          @relation(fields: [signedByUserId], references: [id], onDelete: Restrict)
+
+  @@index([issueDate])
+  @@index([externalPartyId])
 }
 
 model Role {
@@ -225,58 +350,79 @@ model UserRole {
   userId     Int
   roleId     Int
   assignedAt DateTime @default(now())
-  Role       Role     @relation(fields: [roleId], references: [id])
-  User       User     @relation(fields: [userId], references: [id])
+
+  Role Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
+  User User @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@unique([userId, roleId])
+  @@index([userId])
+  @@index([roleId])
 }
 
 model WorkflowInstance {
-  id                 BigInt               @id @default(autoincrement())
-  documentId         BigInt
-  currentStep        String
-  status             String               @default("InProgress")
-  startedAt          DateTime             @default(now())
-  endedAt            DateTime?
-  Document           Document             @relation(fields: [documentId], references: [id])
+  id          BigInt         @id @default(autoincrement())
+  documentId  BigInt
+  currentStep String
+  status      WorkflowStatus @default(InProgress)
+  startedAt   DateTime       @default(now())
+  endedAt     DateTime?
+
+  // لعرض "المعاملات على طاولتي"
+  currentAssigneeUserId Int?
+  currentAssignee       User? @relation("WorkflowInstanceCurrentAssignee", fields: [currentAssigneeUserId], references: [id], onDelete: SetNull)
+
+  Document           Document             @relation(fields: [documentId], references: [id], onDelete: Cascade)
   WorkflowStepAction WorkflowStepAction[]
+
+  @@index([status])
+  @@index([currentAssigneeUserId])
+  @@index([documentId])
 }
 
 model WorkflowStepAction {
-  id               BigInt           @id @default(autoincrement())
+  id               BigInt             @id @default(autoincrement())
   workflowId       BigInt
   stepName         String
-  actionType       String
+  actionType       WorkflowActionType
   actionByUserId   Int
-  actionAt         DateTime         @default(now())
+  actionAt         DateTime           @default(now())
   notes            String?
   requiredNextStep String?
-  User             User             @relation(fields: [actionByUserId], references: [id])
-  WorkflowInstance WorkflowInstance @relation(fields: [workflowId], references: [id])
+
+  User             User             @relation(fields: [actionByUserId], references: [id], onDelete: Restrict)
+  WorkflowInstance WorkflowInstance @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@index([workflowId])
+  @@index([actionByUserId])
+  @@index([actionAt])
 }
 
-
 model IncomingDistributionLog {
-  id               BigInt               @id @default(autoincrement())
+  id BigInt @id @default(autoincrement())
 
-  // لأي توزيع يخص هذا السجل؟
-  distributionId   BigInt
-  distribution     IncomingDistribution @relation(fields: [distributionId], references: [id])
+  distributionId BigInt
+  distribution   IncomingDistribution @relation(fields: [distributionId], references: [id], onDelete: Cascade)
 
-  // الحالة قبل وبعد
-  oldStatus        String?
-  newStatus        String?
+  oldStatus DistributionStatus?
+  newStatus DistributionStatus?
 
-  // ملاحظة المتابعة اللي كتبها الموظف (مثلاً: "أرسلنا الموضوع للشؤون القانونية")
-  note             String?
+  note String?
 
-  // من قام بهذي الخطوة؟
-  updatedByUserId  Int
-  updatedByUser    User                @relation("LogsUpdatedByUser", fields: [updatedByUserId], references: [id])
+  updatedByUserId Int
+  updatedByUser   User @relation("LogsUpdatedByUser", fields: [updatedByUserId], references: [id], onDelete: Restrict)
 
-  // متى تم التحديث؟
-  createdAt        DateTime            @default(now())
+  createdAt DateTime @default(now())
 
   @@index([distributionId])
   @@index([createdAt])
+  @@index([updatedByUserId])
+}
+
+
+model NumberSequence {
+  id         Int    @id @default(autoincrement())
+  scope      String @unique     // مثال: "INCOMING_2025", "OUTGOING_2025"
+  lastNumber Int    @default(0)
+
+  @@index([scope])
 }
