@@ -11,7 +11,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
-import { Permissions } from 'src/auth/permissions.decorator';
+import { RequirePermissions  } from 'src/auth/permissions.decorator';
 import { PERMISSIONS } from 'src/auth/permissions.constants';
 import { IncomingService } from './incoming.service';
 
@@ -20,8 +20,8 @@ import { IncomingService } from './incoming.service';
 export class IncomingController {
   constructor(private readonly incomingService: IncomingService) {}
 
+  @RequirePermissions(PERMISSIONS.INCOMING_READ)
   @Get('my-latest')
-  @Permissions(PERMISSIONS.INCOMING_READ)
   async getLatestIncoming(
     @Query('page') page: number,
     @Query('pageSize') pageSize: number,
@@ -29,8 +29,8 @@ export class IncomingController {
     return this.incomingService.getLatestIncoming(page, pageSize);
   }
 
+  @RequirePermissions(PERMISSIONS.INCOMING_READ)
   @Get('my-desk')
-  @Permissions(PERMISSIONS.INCOMING_READ)
   async myDesk(
     @Req() req: any,
     @Query('page') page?: string,
@@ -56,8 +56,8 @@ export class IncomingController {
     });
   }
 
+  @RequirePermissions(PERMISSIONS.INCOMING_READ)
   @Get('search')
-  @Permissions(PERMISSIONS.INCOMING_READ)
   async search(
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
@@ -74,26 +74,26 @@ export class IncomingController {
     });
   }
 
+  @RequirePermissions(PERMISSIONS.INCOMING_READ)
   @Get('stats/overview')
-  @Permissions(PERMISSIONS.INCOMING_READ)
   async statsOverview(@Req() req: any) {
     return this.incomingService.statsOverview(req.user);
   }
 
+  @RequirePermissions(PERMISSIONS.INCOMING_READ)
   @Get(':id')
-  @Permissions(PERMISSIONS.INCOMING_READ)
   async details(@Param('id') id: string) {
     return this.incomingService.getIncomingDetails(id);
   }
 
+  @RequirePermissions(PERMISSIONS.INCOMING_READ)
   @Get(':id/timeline')
-  @Permissions(PERMISSIONS.INCOMING_READ)
   async timeline(@Param('id') id: string) {
     return this.incomingService.getTimeline(id);
   }
 
+  @RequirePermissions(PERMISSIONS.INCOMING_CREATE)
   @Post()
-  @Permissions(PERMISSIONS.INCOMING_CREATE)
   async createQuickIncoming(@Body() body: any, @Req() req: any) {
     const {
       documentTitle,
@@ -126,8 +126,8 @@ export class IncomingController {
     );
   }
 
+  @RequirePermissions(PERMISSIONS.INCOMING_FORWARD)
   @Post(':id/forward')
-  @Permissions(PERMISSIONS.INCOMING_FORWARD)
   async forward(@Param('id') id: string, @Body() body: any, @Req() req: any) {
     const payload = {
       targetDepartmentId: Number(body?.targetDepartmentId),
@@ -144,8 +144,8 @@ export class IncomingController {
     return this.incomingService.forwardIncoming(id, payload, req.user);
   }
 
+  @RequirePermissions(PERMISSIONS.INCOMING_UPDATE_STATUS)
   @Patch('distributions/:distId/status')
-  @Permissions(PERMISSIONS.INCOMING_UPDATE_STATUS)
   async changeDistStatus(
     @Param('distId') distId: string,
     @Body() body: any,
@@ -161,8 +161,8 @@ export class IncomingController {
     );
   }
 
+  @RequirePermissions(PERMISSIONS.INCOMING_ASSIGN)
   @Patch('distributions/:distId/assign')
-  @Permissions(PERMISSIONS.INCOMING_ASSIGN)
   async assignDist(
     @Param('distId') distId: string,
     @Body() body: any,
@@ -179,8 +179,8 @@ export class IncomingController {
     );
   }
 
+  @RequirePermissions(PERMISSIONS.INCOMING_UPDATE_STATUS)
   @Post('distributions/:distId/notes')
-  @Permissions(PERMISSIONS.INCOMING_UPDATE_STATUS)
   async addDistNote(
     @Param('distId') distId: string,
     @Body() body: any,
@@ -191,14 +191,14 @@ export class IncomingController {
     return this.incomingService.addDistributionNote(distId, note, req.user);
   }
 
+  @RequirePermissions(PERMISSIONS.INCOMING_READ)
   @Get('stats/daily')
-  @Permissions(PERMISSIONS.INCOMING_READ)
   async daily(@Query('days') days?: string) {
     return this.incomingService.dailySeries(Number(days) || 30);
   }
 
+  @RequirePermissions(PERMISSIONS.INCOMING_READ)
   @Get('stats/my-desk')
-  @Permissions(PERMISSIONS.INCOMING_READ)
   async myDeskStatus(@Req() req: any) {
     return this.incomingService.myDeskStatus(req.user);
   }

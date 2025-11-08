@@ -8,8 +8,8 @@ export type Permission =
   | 'outgoing.create'
   | 'outgoing.update'
   | 'outgoing.deliver'
-  | 'department.read'
-  | 'department.manage'
+  | 'departments.read'
+  | 'departments.manage'
   | 'dashboard.read';
 
 export const RolePermissions: Record<string, Permission[]> = {
@@ -17,18 +17,18 @@ export const RolePermissions: Record<string, Permission[]> = {
     'dashboard.read',
     'incoming.read','incoming.create','incoming.update','incoming.assign','incoming.upload',
     'outgoing.read','outgoing.create','outgoing.update','outgoing.deliver',
-    'department.read','department.manage',
+    'departments.read','departments.manage',
   ],
   MANAGER: [
     'dashboard.read',
     'incoming.read','incoming.create','incoming.update','incoming.assign','incoming.upload',
     'outgoing.read','outgoing.create','outgoing.update','outgoing.deliver',
-    'department.read',
+    'departments.read',
   ],
   CLERK: [
     'dashboard.read',
     'incoming.read','incoming.create','incoming.upload',
     'outgoing.read','outgoing.create',
-    'department.read',
+    'departments.read',
   ],
 };

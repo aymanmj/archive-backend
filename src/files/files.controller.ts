@@ -10,7 +10,7 @@ import {
   UseInterceptors,
 } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
-import { Permissions } from 'src/auth/permissions.decorator';
+import { RequirePermissions } from 'src/auth/permissions.decorator';
 import { PERMISSIONS } from 'src/auth/permissions.constants';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -44,8 +44,8 @@ function sha256OfFile(fullPath: string): Promise<string> {
 export class FilesController {
   constructor(private prisma: PrismaService) {}
 
+  @RequirePermissions(PERMISSIONS.FILES_READ)
   @Get(':id/files')
-  @Permissions(PERMISSIONS.FILES_READ)
   async list(@Param('id') id: string) {
     const docId = BigInt(id as any);
     const files = await this.prisma.documentFile.findMany({
@@ -72,8 +72,8 @@ export class FilesController {
     }));
   }
 
+  @RequirePermissions(PERMISSIONS.FILES_UPLOAD)
   @Post(':id/files')
-  @Permissions(PERMISSIONS.FILES_UPLOAD)
   @UseInterceptors(
     FileInterceptor('file', {
       storage: diskStorage({
@@ -149,8 +149,8 @@ export class FilesController {
     };
   }
 
+  @RequirePermissions(PERMISSIONS.FILES_DELETE)
   @Delete('files/:fileId')
-  @Permissions(PERMISSIONS.FILES_DELETE)
   async remove(@Param('fileId') fileId: string) {
     const idNum = BigInt(fileId as any);
     const f = await this.prisma.documentFile.findUnique({ where: { id: idNum } });

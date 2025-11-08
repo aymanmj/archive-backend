@@ -11,7 +11,7 @@ import { UsersService } from './users.service';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { AuthorizationService } from 'src/auth/authorization.service';
-import { Permissions } from 'src/auth/permissions.decorator';
+import { RequirePermissions  } from 'src/auth/permissions.decorator';
 import { PERMISSIONS } from 'src/auth/permissions.constants';
 
 @UseGuards(JwtAuthGuard)
@@ -23,7 +23,7 @@ export class UsersController {
     private authz: AuthorizationService, // ⬅️ إضافة الحقل
   ) {}
 
-  @Permissions(PERMISSIONS.USERS_READ)
+  // @RequirePermissions(PERMISSIONS.USERS_READ)
   @Get('me')
   async me(@Req() req: any) {
     const { userId } = req.user;
@@ -35,7 +35,7 @@ export class UsersController {
     return { ...me, permissions: perms };
   }
 
-  @Permissions(PERMISSIONS.USERS_READ)
+  @RequirePermissions(PERMISSIONS.USERS_READ)
   @Get('list-basic')
   async listBasic() {
     const users = await this.prisma.user.findMany({
@@ -50,7 +50,7 @@ export class UsersController {
     }));
   }
 
-  @Permissions(PERMISSIONS.USERS_READ)
+  @RequirePermissions(PERMISSIONS.USERS_READ)
   @Get('by-department/:depId')
   async listByDepartment(@Param('depId', ParseIntPipe) depId: number) {
     const users = await this.prisma.user.findMany({

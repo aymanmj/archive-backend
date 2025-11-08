@@ -9,7 +9,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
-import { Permissions } from 'src/auth/permissions.decorator';
+import { RequirePermissions  } from 'src/auth/permissions.decorator';
 import { PERMISSIONS } from 'src/auth/permissions.constants';
 import { AuditService } from './audit.service';
 
@@ -24,7 +24,7 @@ export class AuditController {
    * ملاحظة: from/to هنا سلاسل ISO تُمرَّر كما هي إلى الخدمة (service)
    */
   @Get()
-  @Permissions(PERMISSIONS.AUDIT_READ)
+  @RequirePermissions (PERMISSIONS.AUDIT_READ)
   async search(
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
@@ -51,7 +51,7 @@ export class AuditController {
    * GET /audit/:id
    */
   @Get(':id')
-  @Permissions(PERMISSIONS.AUDIT_READ)
+  @RequirePermissions (PERMISSIONS.AUDIT_READ)
   async getOne(@Param('id') id: string) {
     if (!id) throw new BadRequestException('id is required');
     return this.auditService.getOne(id);

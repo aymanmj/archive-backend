@@ -40,10 +40,41 @@ export class AuthorizationService {
     return perms;
   }
 
+  // async hasAll(userId: number, required: string[]): Promise<boolean> {
+  //   if (!required || required.length === 0) return true;
+  //   const userPerms = await this.getUserPermissions(userId);
+  //   return required.every((p) => userPerms.has(p));
+  // }
+
+  // async hasAll(userId: number, required: string[]): Promise<boolean> {
+  //   // ✅ تطبيع دفاعي
+  //   const norm = (s: string) => String(s).trim().toLowerCase();
+
+  //   if (!required || required.length === 0) return true;
+
+  //   // required ممكن تكون جاية [['incoming.read']] أو فيها مسافات
+  //   const req = required.flat().map(norm).filter(Boolean);
+
+  //   // جب صلاحياتي كـ string[] (أو Set) وطبّعها بنفس الطريقة
+  //   const mineArr = await this.list(userId);               // <-- ترجع string[]
+  //   const mine = new Set(mineArr.map(norm));               // <-- Set مطبَّع
+
+  //   // ✅ لقطات تشخيصية مؤقتة (احذفها بعد ما تتأكد)
+  //   // console.log('[AUTHZ] user:', userId, 'required:', req, 'have:', Array.from(mine));
+
+  //   return req.every((p) => mine.has(p));
+  // }
+
   async hasAll(userId: number, required: string[]): Promise<boolean> {
-    if (!required?.length) return true;
-    const userPerms = await this.getUserPermissions(userId);
-    return required.every((p) => userPerms.has(p));
+    if (!required || required.length === 0) return true;
+
+    const norm = (s: string) => String(s).trim().toLowerCase();
+    const req = required.flat().map(norm).filter(Boolean);
+
+    const mineArr = await this.list(userId);   // تُرجع string[]
+    const mine = new Set(mineArr.map(norm));
+
+    return req.every((p) => mine.has(p));
   }
 
   async list(userId: number): Promise<string[]> {

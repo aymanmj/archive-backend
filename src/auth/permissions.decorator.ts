@@ -1,20 +1,24 @@
 // src/auth/permissions.decorator.ts
 
 import { SetMetadata } from '@nestjs/common';
-export const PERMISSIONS_KEY = 'Permissions';
-export const Permissions = (...perms: string[]) => SetMetadata(PERMISSIONS_KEY, perms);
 
+export const PERMISSIONS_KEY = 'permissions_required';
 
-// // src/auth/permissions.decorator.ts
-// import { SetMetadata } from '@nestjs/common';
-// import type { PermissionCode } from './permissions.constants';
+/**
+ * يقبل:
+ *   - قيم مفردة:  @RequirePermissions('incoming.read')
+ *   - قيم متعددة: @RequirePermissions('incoming.read','incoming.create')
+ *   - مصفوفة:     @RequirePermissions(['incoming.read','incoming.create'])
+ * وسيُرجع دائمًا مصفوفة مسطّحة string[]
+ */
+export function RequirePermissions(
+  ...perms: Array<string | string[]>
+): MethodDecorator & ClassDecorator {
+  // فلترة القيم الفارغة + تسطيح المصفوفات المتداخلة + تحويل كل شيء لسلاسل
+  const flat = perms
+    .flat()
+    .filter(Boolean)
+    .map((p) => String(p));
 
-// export const PERMISSIONS_KEY = 'required_permissions';
-// export const RequirePermissions = (...perms: PermissionCode[]) =>
-//   SetMetadata(PERMISSIONS_KEY, perms);
-
-
-
-// import { SetMetadata } from '@nestjs/common';
-// export const PERMISSIONS_KEY = 'route_permissions';
-// export const Permissions = (...perms: string[]) => SetMetadata(PERMISSIONS_KEY, perms);
+  return SetMetadata(PERMISSIONS_KEY, flat);
+}

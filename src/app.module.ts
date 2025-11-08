@@ -1,5 +1,8 @@
+// src/app.module.ts
 import { Module } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
+import { JwtAuthGuard } from './auth/jwt-auth.guard';
+import { PermissionsGuard } from './auth/permissions.guard';
 
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -15,8 +18,8 @@ import { AuditModule } from './audit/audit.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { HealthController } from './health/health.controller';
 
-import { PermissionsGuard } from './auth/permissions.guard';
-import { JwtAuthGuard } from './auth/jwt-auth.guard';
+// import { PermissionsGuard } from './auth/permissions.guard';
+// ❌ لا تُسجّل JwtAuthGuard كـ APP_GUARD هنا
 
 @Module({
   imports: [
@@ -33,13 +36,14 @@ import { JwtAuthGuard } from './auth/jwt-auth.guard';
   controllers: [AppController, HealthController],
   providers: [
     AppService,
-    // ➊ أولًا: تأكيد التوثيق
     { provide: APP_GUARD, useClass: JwtAuthGuard },
-    // ➋ ثانيًا: فحص الصلاحيات
+    // ✅ فقط الحارس الخاص بالأذونات كعمومي
     { provide: APP_GUARD, useClass: PermissionsGuard },
   ],
 })
 export class AppModule {}
+
+
 
 
 
@@ -60,8 +64,8 @@ export class AppModule {}
 // import { DashboardModule } from './dashboard/dashboard.module';
 // import { HealthController } from './health/health.controller';
 
-// // ⬇️ الجارد العمومي للصلاحيات
 // import { PermissionsGuard } from './auth/permissions.guard';
+// import { JwtAuthGuard } from './auth/jwt-auth.guard';
 
 // @Module({
 //   imports: [
@@ -78,10 +82,11 @@ export class AppModule {}
 //   controllers: [AppController, HealthController],
 //   providers: [
 //     AppService,
-//     // ⬇️ تفعيل الجارد على مستوى التطبيق كله
+//     // ➊ أولًا: تأكيد التوثيق
+//     { provide: APP_GUARD, useClass: JwtAuthGuard },
+//     // ➋ ثانيًا: فحص الصلاحيات
 //     { provide: APP_GUARD, useClass: PermissionsGuard },
 //   ],
 // })
 // export class AppModule {}
-
 

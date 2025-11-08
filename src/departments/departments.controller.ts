@@ -2,7 +2,7 @@ import {
   Body, Controller, Get, Patch, Param, ParseIntPipe, Query, Post, UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
-import { Permissions } from 'src/auth/permissions.decorator';
+import { RequirePermissions  } from 'src/auth/permissions.decorator';
 import { PERMISSIONS } from 'src/auth/permissions.constants';
 import { DepartmentsService } from './departments.service';
 import { UpdateStatusDto } from './dto/update-status.dto';
@@ -13,20 +13,20 @@ import { CreateDepartmentDto } from './dto/create-department.dto';
 export class DepartmentsController {
   constructor(private readonly departmentsService: DepartmentsService) {}
 
+  //@RequirePermissions (PERMISSIONS.DEPARTMENTS_READ)
   @Get()
-  @Permissions(PERMISSIONS.DEPARTMENTS_READ)
   async findAll(@Query('status') status?: string) {
     return this.departmentsService.findAll({ status });
   }
 
+  //@RequirePermissions(PERMISSIONS.DEPARTMENTS_CREATE)
   @Post()
-  @Permissions(PERMISSIONS.DEPARTMENTS_CREATE)
   async create(@Body() body: CreateDepartmentDto) {
     return this.departmentsService.create(body);
   }
 
+  //@RequirePermissions(PERMISSIONS.DEPARTMENTS_UPDATE_STATUS)
   @Patch(':id/status')
-  @Permissions(PERMISSIONS.DEPARTMENTS_UPDATE_STATUS)
   async updateStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: UpdateStatusDto,
@@ -34,8 +34,8 @@ export class DepartmentsController {
     return this.departmentsService.updateStatus(id, body.status);
   }
 
+  // @RequirePermissions(PERMISSIONS.DEPARTMENTS_UPDATE_STATUS)
   @Patch(':id/toggle-status')
-  @Permissions(PERMISSIONS.DEPARTMENTS_UPDATE_STATUS)
   async toggleStatus(@Param('id', ParseIntPipe) id: number) {
     return this.departmentsService.toggleStatus(id);
   }
