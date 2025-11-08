@@ -17,6 +17,7 @@ import { FilesModule } from './files/files.module';
 import { AuditModule } from './audit/audit.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { HealthController } from './health/health.controller';
+import { RbacModule } from './rbac/rbac.module';
 
 // import { PermissionsGuard } from './auth/permissions.guard';
 // ❌ لا تُسجّل JwtAuthGuard كـ APP_GUARD هنا
@@ -32,6 +33,7 @@ import { HealthController } from './health/health.controller';
     OutgoingModule,
     FilesModule,
     DashboardModule,
+    RbacModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

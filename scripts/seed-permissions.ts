@@ -14,6 +14,8 @@ const PERMS = [
   'users.read',
   // Audit
   'audit.read',
+  // Rbac
+  'admin.rbac',
 ];
 
 async function main() {

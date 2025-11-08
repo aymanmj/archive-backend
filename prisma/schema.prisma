@@ -101,6 +101,8 @@ model User {
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
 
+  isSystem              Boolean   @default(false)
+
   AuditTrail                    AuditTrail[]
   documentsCreated              Document[]                @relation("UserCreatedDocuments")
   uploadedFiles                 DocumentFile[]            @relation("UserUploadedFiles")
@@ -355,6 +357,8 @@ model Role {
   UserRole    UserRole[]
   // [NEW]
   RolePermission RolePermission[]
+
+  isSystem      Boolean @default(false)
 }
 
 model UserRole {

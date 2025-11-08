@@ -36,6 +36,11 @@ async function ensureRoles() {
     ],
     skipDuplicates: true,
   });
+
+  await prisma.role.updateMany({
+    where: { roleName: 'ADMIN' },
+    data: { isSystem: true },
+  });
 }
 
 /** إدارات إضافية بالعربية (بدون تكرار) */
@@ -158,6 +163,7 @@ async function ensureAdminUser() {
         passwordHash,
         isActive: true,
         departmentId: dept?.id ?? null,
+        isSystem: true,
         isDeleted: false,
         deletedAt: null,
       },
