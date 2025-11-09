@@ -47,6 +47,7 @@ CREATE TABLE "User" (
     "lastLoginAt" TIMESTAMP(3),
     "isDeleted" BOOLEAN NOT NULL DEFAULT false,
     "deletedAt" TIMESTAMP(3),
+    "isSystem" BOOLEAN NOT NULL DEFAULT false,
 
     CONSTRAINT "User_pkey" PRIMARY KEY ("id")
 );
@@ -88,6 +89,7 @@ CREATE TABLE "Document" (
     "securityLevelId" INTEGER NOT NULL,
     "createdByUserId" INTEGER NOT NULL,
     "owningDepartmentId" INTEGER NOT NULL,
+    "searchVector" tsvector,
 
     CONSTRAINT "Document_pkey" PRIMARY KEY ("id")
 );
@@ -137,6 +139,7 @@ CREATE TABLE "IncomingRecord" (
     "requiredAction" TEXT,
     "dueDateForResponse" TIMESTAMP(3),
     "receivedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedat" TIMESTAMP(3) NOT NULL,
 
     CONSTRAINT "IncomingRecord_pkey" PRIMARY KEY ("id")
 );
@@ -166,6 +169,8 @@ CREATE TABLE "AuditTrail" (
     "actionAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "fromIP" TEXT,
     "workstationName" TEXT,
+    "requestId" TEXT,
+    "correlationId" TEXT,
 
     CONSTRAINT "AuditTrail_pkey" PRIMARY KEY ("id")
 );
@@ -220,6 +225,7 @@ CREATE TABLE "Role" (
     "id" SERIAL NOT NULL,
     "roleName" TEXT NOT NULL,
     "description" TEXT,
+    "isSystem" BOOLEAN NOT NULL DEFAULT false,
 
     CONSTRAINT "Role_pkey" PRIMARY KEY ("id")
 );
@@ -272,6 +278,44 @@ CREATE TABLE "IncomingDistributionLog" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     CONSTRAINT "IncomingDistributionLog_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "NumberSequence" (
+    "id" SERIAL NOT NULL,
+    "scope" TEXT NOT NULL,
+    "lastNumber" INTEGER NOT NULL DEFAULT 0,
+
+    CONSTRAINT "NumberSequence_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "OCRText" (
+    "id" BIGSERIAL NOT NULL,
+    "documentId" BIGINT NOT NULL,
+    "textContent" TEXT NOT NULL,
+    "language" TEXT,
+    "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    CONSTRAINT "OCRText_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "Permission" (
+    "id" SERIAL NOT NULL,
+    "code" TEXT NOT NULL,
+    "description" TEXT,
+
+    CONSTRAINT "Permission_pkey" PRIMARY KEY ("id")
+);
+
+-- CreateTable
+CREATE TABLE "RolePermission" (
+    "id" SERIAL NOT NULL,
+    "roleId" INTEGER NOT NULL,
+    "permissionId" INTEGER NOT NULL,
+
+    CONSTRAINT "RolePermission_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex
@@ -329,6 +373,9 @@ CREATE INDEX "Document_securityLevelId_idx" ON "Document"("securityLevelId");
 CREATE INDEX "Document_documentTypeId_idx" ON "Document"("documentTypeId");
 
 -- CreateIndex
+CREATE INDEX "Document_searchVector_idx" ON "Document" USING GIN ("searchVector");
+
+-- CreateIndex
 CREATE INDEX "DocumentFile_documentId_isLatestVersion_versionNumber_idx" ON "DocumentFile"("documentId", "isLatestVersion", "versionNumber");
 
 -- CreateIndex
@@ -375,6 +422,9 @@ CREATE INDEX "AuditTrail_userId_idx" ON "AuditTrail"("userId");
 
 -- CreateIndex
 CREATE INDEX "AuditTrail_actionAt_idx" ON "AuditTrail"("actionAt");
+
+-- CreateIndex
+CREATE INDEX "AuditTrail_correlationId_idx" ON "AuditTrail"("correlationId");
 
 -- CreateIndex
 CREATE INDEX "DocumentMetadata_metaKey_idx" ON "DocumentMetadata"("metaKey");
@@ -444,6 +494,27 @@ CREATE INDEX "IncomingDistributionLog_createdAt_idx" ON "IncomingDistributionLog
 
 -- CreateIndex
 CREATE INDEX "IncomingDistributionLog_updatedByUserId_idx" ON "IncomingDistributionLog"("updatedByUserId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "NumberSequence_scope_key" ON "NumberSequence"("scope");
+
+-- CreateIndex
+CREATE INDEX "NumberSequence_scope_idx" ON "NumberSequence"("scope");
+
+-- CreateIndex
+CREATE INDEX "OCRText_documentId_idx" ON "OCRText"("documentId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "Permission_code_key" ON "Permission"("code");
+
+-- CreateIndex
+CREATE INDEX "RolePermission_roleId_idx" ON "RolePermission"("roleId");
+
+-- CreateIndex
+CREATE INDEX "RolePermission_permissionId_idx" ON "RolePermission"("permissionId");
+
+-- CreateIndex
+CREATE UNIQUE INDEX "RolePermission_roleId_permissionId_key" ON "RolePermission"("roleId", "permissionId");
 
 -- AddForeignKey
 ALTER TABLE "Department" ADD CONSTRAINT "Department_parentDepartmentId_fkey" FOREIGN KEY ("parentDepartmentId") REFERENCES "Department"("id") ON DELETE SET NULL ON UPDATE CASCADE;
@@ -534,3 +605,12 @@ ALTER TABLE "IncomingDistributionLog" ADD CONSTRAINT "IncomingDistributionLog_di
 
 -- AddForeignKey
 ALTER TABLE "IncomingDistributionLog" ADD CONSTRAINT "IncomingDistributionLog_updatedByUserId_fkey" FOREIGN KEY ("updatedByUserId") REFERENCES "User"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "OCRText" ADD CONSTRAINT "OCRText_documentId_fkey" FOREIGN KEY ("documentId") REFERENCES "Document"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "RolePermission" ADD CONSTRAINT "RolePermission_roleId_fkey" FOREIGN KEY ("roleId") REFERENCES "Role"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE "RolePermission" ADD CONSTRAINT "RolePermission_permissionId_fkey" FOREIGN KEY ("permissionId") REFERENCES "Permission"("id") ON DELETE CASCADE ON UPDATE CASCADE;

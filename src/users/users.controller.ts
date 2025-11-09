@@ -1,6 +1,8 @@
 import {
   Controller,
+  Body,
   Get,
+  Post,
   Param,
   Req,
   UseGuards,
@@ -13,6 +15,8 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { AuthorizationService } from 'src/auth/authorization.service';
 import { RequirePermissions  } from 'src/auth/permissions.decorator';
 import { PERMISSIONS } from 'src/auth/permissions.constants';
+import { CreateUserDto } from './dto/create-user.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('users')
@@ -26,13 +30,25 @@ export class UsersController {
   // @RequirePermissions(PERMISSIONS.USERS_READ)
   @Get('me')
   async me(@Req() req: any) {
-    const { userId } = req.user;
+    const userId = req?.user?.sub;
     if (!userId) {
       throw new BadRequestException('معرف المستخدم غير موجود في التوكن');
     }
     const me = await this.usersService.getMe(userId);
     const perms = await this.authz.list(userId);
     return { ...me, permissions: perms };
+  }
+
+  @RequirePermissions([PERMISSIONS.USERS_MANAGE]) // أو [PERMISSIONS.USERS_MANAGE, PERMISSIONS.USERS_READ]
+  @Post()
+  async create(@Body() dto: CreateUserDto) {
+    return this.usersService.createUser(dto);
+  }
+
+  @RequirePermissions([PERMISSIONS.USERS_MANAGE])
+  @Post(':id/reset-password')
+  async resetPassword(@Param('id', ParseIntPipe) id: number, @Body() body: ResetPasswordDto) {
+    return this.usersService.resetPassword(id, body.newPassword);
   }
 
   @RequirePermissions(PERMISSIONS.USERS_READ)

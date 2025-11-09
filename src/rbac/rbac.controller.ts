@@ -1,10 +1,11 @@
 // src/rbac/rbac.controller.ts
 
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, UseGuards, Req } from '@nestjs/common';
 import { RbacService } from './rbac.service';
 import { RequirePermissions } from 'src/auth/permissions.decorator';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { SetUserRolesDto, CreateRoleDto, UpdateRoleDto, SetRolePermissionsDto } from './dto/rbac-dto';
+import { RoleRecipeDto } from './dto/role-recipe.dto';
 
 @UseGuards(JwtAuthGuard)
 @RequirePermissions('admin.rbac')
@@ -21,7 +22,9 @@ export class RbacController {
   listRoles() { return this.rbac.listRoles(); }
 
   @Post('roles')
-  createRole(@Body() b: CreateRoleDto) { return this.rbac.createRole(b.roleName, b.description); }
+  createRole(@Body() b: CreateRoleDto) {
+    return this.rbac.createRole(b.roleName, b.description);
+  }
 
   @Patch('roles/:id')
   updateRole(@Param('id', ParseIntPipe) id: number, @Body() b: UpdateRoleDto) {
@@ -29,11 +32,17 @@ export class RbacController {
   }
 
   @Delete('roles/:id')
-  deleteRole(@Param('id', ParseIntPipe) id: number) { return this.rbac.deleteRole(id); }
+  deleteRole(@Param('id', ParseIntPipe) id: number) {
+    return this.rbac.deleteRole(id);
+  }
 
   @Post('roles/:id/permissions')
-  setRolePerms(@Param('id', ParseIntPipe) id: number, @Body() b: SetRolePermissionsDto) {
-    return this.rbac.setRolePermissions(id, b.permissions || []);
+  setRolePerms(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() b: SetRolePermissionsDto,
+    @Req() req: any, // ⬅️ للحصول على req.user.id
+  ) {
+    return this.rbac.setRolePermissions(id, b.permissions || [], req.user?.id);
   }
 
   // Users <-> Roles
@@ -43,7 +52,71 @@ export class RbacController {
   }
 
   @Post('users/:userId/roles')
-  setUserRoles(@Param('userId', ParseIntPipe) userId: number, @Body() b: SetUserRolesDto) {
-    return this.rbac.setUserRoles(userId, b.roleIds || []);
+  setUserRoles(
+    @Param('userId', ParseIntPipe) userId: number,
+    @Body() b: SetUserRolesDto,
+    @Req() req: any, // ⬅️ للحصول على req.user.id
+  ) {
+    return this.rbac.setUserRoles(userId, b.roleIds || [], req.user?.id);
+  }
+
+  // وصفة/Recipe: إنشاء/تحديث دور وربط صلاحيات محددة دفعة واحدة
+  @Post('recipes')
+  createOrUpdateRecipe(@Body() body: RoleRecipeDto) {
+    return this.rbac.upsertRoleWithPermissions(body);
   }
 }
+
+
+
+
+
+// // src/rbac/rbac.controller.ts
+
+// import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
+// import { RbacService } from './rbac.service';
+// import { RequirePermissions } from 'src/auth/permissions.decorator';
+// import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
+// import { SetUserRolesDto, CreateRoleDto, UpdateRoleDto, SetRolePermissionsDto } from './dto/rbac-dto';
+
+// @UseGuards(JwtAuthGuard)
+// @RequirePermissions('admin.rbac')
+// @Controller('rbac')
+// export class RbacController {
+//   constructor(private rbac: RbacService) {}
+
+//   // Permissions
+//   @Get('permissions')
+//   listPermissions() { return this.rbac.listPermissions(); }
+
+//   // Roles
+//   @Get('roles')
+//   listRoles() { return this.rbac.listRoles(); }
+
+//   @Post('roles')
+//   createRole(@Body() b: CreateRoleDto) { return this.rbac.createRole(b.roleName, b.description); }
+
+//   @Patch('roles/:id')
+//   updateRole(@Param('id', ParseIntPipe) id: number, @Body() b: UpdateRoleDto) {
+//     return this.rbac.updateRole(id, b);
+//   }
+
+//   @Delete('roles/:id')
+//   deleteRole(@Param('id', ParseIntPipe) id: number) { return this.rbac.deleteRole(id); }
+
+//   @Post('roles/:id/permissions')
+//   setRolePerms(@Param('id', ParseIntPipe) id: number, @Body() b: SetRolePermissionsDto) {
+//     return this.rbac.setRolePermissions(id, b.permissions || []);
+//   }
+
+//   // Users <-> Roles
+//   @Get('users/:userId/roles')
+//   listUserRoles(@Param('userId', ParseIntPipe) userId: number) {
+//     return this.rbac.listUserRoles(userId);
+//   }
+
+//   @Post('users/:userId/roles')
+//   setUserRoles(@Param('userId', ParseIntPipe) userId: number, @Body() b: SetUserRolesDto) {
+//     return this.rbac.setUserRoles(userId, b.roleIds || []);
+//   }
+// }

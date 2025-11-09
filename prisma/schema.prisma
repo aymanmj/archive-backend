@@ -242,6 +242,9 @@ model IncomingRecord {
   dueDateForResponse DateTime?
   receivedAt         DateTime       @default(now())
 
+  updatedAt          DateTime       @updatedAt @map("updatedat")
+
+
   distributions  IncomingDistribution[]
   document       Document               @relation(fields: [documentId], references: [id], onDelete: Restrict)
   externalParty  ExternalParty          @relation(fields: [externalPartyId], references: [id], onDelete: Restrict)

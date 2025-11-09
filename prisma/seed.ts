@@ -1,5 +1,4 @@
-// prisma/seed.
-
+// prisma/seed.ts
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcrypt';
 
@@ -32,7 +31,7 @@ async function ensureRoles() {
   await prisma.role.createMany({
     data: [
       { roleName: 'ADMIN', description: 'System administrator' },
-      { roleName: 'USER', description: 'Regular user' },
+      { roleName: 'USER',  description: 'Regular user' },
     ],
     skipDuplicates: true,
   });
@@ -61,7 +60,7 @@ async function ensureExtraDepartments() {
 }
 
 async function ensurePermissions() {
-  // الأكواد القديمة (تبقى كما هي لضمان التوافق)
+  // Legacy للتوافق
   const legacy = [
     { code: 'doc.view',       description: 'View document' },
     { code: 'doc.download',   description: 'Download document' },
@@ -75,7 +74,7 @@ async function ensurePermissions() {
     { code: 'admin.rbac',     description: 'Manage roles/permissions' },
   ];
 
-  // الأكواد الجديدة المستخدمة في RBAC الدقيق (تطابق permissions.constants.ts)
+  // Granular RBAC (أضفنا users.manage هنا)
   const granular = [
     // Incoming
     { code: 'incoming.read',          description: 'Read incoming' },
@@ -101,6 +100,7 @@ async function ensurePermissions() {
 
     // Users
     { code: 'users.read',             description: 'Read users' },
+    { code: 'users.manage',           description: 'Create/modify users & reset passwords' }, // NEW
 
     // Audit
     { code: 'audit.read',             description: 'Read audit trail' },
@@ -111,7 +111,7 @@ async function ensurePermissions() {
     skipDuplicates: true,
   });
 
-  // ربط كل الصلاحيات بدور ADMIN
+  // اربط كل الصلاحيات بدور ADMIN
   const adminRole = await prisma.role.findFirst({ where: { roleName: 'ADMIN' } });
   if (adminRole) {
     const allPerms = await prisma.permission.findMany();
@@ -154,6 +154,7 @@ async function ensureAdminUser() {
         isActive: true,
         departmentId: dept?.id ?? null,
         securityClearanceRank: 3,
+        isSystem: true, // ✅ NEW: عند الإنشاء أيضًا
       },
     });
   } else {
@@ -163,7 +164,7 @@ async function ensureAdminUser() {
         passwordHash,
         isActive: true,
         departmentId: dept?.id ?? null,
-        isSystem: true,
+        isSystem: true, // ✅ تأكيد
         isDeleted: false,
         deletedAt: null,
       },
@@ -209,8 +210,7 @@ main()
 
 
 
-
-// // prisma/seed.ts
+// // prisma/seed.
 
 // import { PrismaClient } from '@prisma/client';
 // import * as bcrypt from 'bcrypt';
@@ -248,6 +248,11 @@ main()
 //     ],
 //     skipDuplicates: true,
 //   });
+
+//   await prisma.role.updateMany({
+//     where: { roleName: 'ADMIN' },
+//     data: { isSystem: true },
+//   });
 // }
 
 // /** إدارات إضافية بالعربية (بدون تكرار) */
@@ -268,8 +273,8 @@ main()
 // }
 
 // async function ensurePermissions() {
-//   // تُطابق الكود الحالي لديك (لا نغيّر الـ codes)
-//   const perms = [
+//   // الأكواد القديمة (تبقى كما هي لضمان التوافق)
+//   const legacy = [
 //     { code: 'doc.view',       description: 'View document' },
 //     { code: 'doc.download',   description: 'Download document' },
 //     { code: 'doc.print',      description: 'Print document' },
@@ -282,8 +287,43 @@ main()
 //     { code: 'admin.rbac',     description: 'Manage roles/permissions' },
 //   ];
 
-//   await prisma.permission.createMany({ data: perms, skipDuplicates: true });
+//   // الأكواد الجديدة المستخدمة في RBAC الدقيق (تطابق permissions.constants.ts)
+//   const granular = [
+//     // Incoming
+//     { code: 'incoming.read',          description: 'Read incoming' },
+//     { code: 'incoming.create',        description: 'Create incoming' },
+//     { code: 'incoming.forward',       description: 'Forward incoming' },
+//     { code: 'incoming.assign',        description: 'Assign incoming distribution' },
+//     { code: 'incoming.updateStatus',  description: 'Update incoming distribution status/notes' },
 
+//     // Outgoing
+//     { code: 'outgoing.read',          description: 'Read outgoing' },
+//     { code: 'outgoing.create',        description: 'Create outgoing' },
+//     { code: 'outgoing.markDelivered', description: 'Mark outgoing delivered' },
+
+//     // Files
+//     { code: 'files.read',             description: 'List/read document files' },
+//     { code: 'files.upload',           description: 'Upload document files' },
+//     { code: 'files.delete',           description: 'Delete document files' },
+
+//     // Departments
+//     { code: 'departments.read',       description: 'Read departments' },
+//     { code: 'departments.create',     description: 'Create departments' },
+//     { code: 'departments.updateStatus', description: 'Update/toggle department status' },
+
+//     // Users
+//     { code: 'users.read',             description: 'Read users' },
+
+//     // Audit
+//     { code: 'audit.read',             description: 'Read audit trail' },
+//   ];
+
+//   await prisma.permission.createMany({
+//     data: [...legacy, ...granular],
+//     skipDuplicates: true,
+//   });
+
+//   // ربط كل الصلاحيات بدور ADMIN
 //   const adminRole = await prisma.role.findFirst({ where: { roleName: 'ADMIN' } });
 //   if (adminRole) {
 //     const allPerms = await prisma.permission.findMany();
@@ -307,8 +347,6 @@ main()
 // }
 
 // async function ensureAdminUser() {
-//   // username: admin
-//   // password: admin123 (يمكن تغييره عبر متغير SEED_ADMIN_PASSWORD)
 //   const username = 'admin';
 //   const passwordPlain = process.env.SEED_ADMIN_PASSWORD || 'admin123';
 //   const passwordHash = await bcrypt.hash(passwordPlain, 12);
@@ -337,6 +375,7 @@ main()
 //         passwordHash,
 //         isActive: true,
 //         departmentId: dept?.id ?? null,
+//         isSystem: true,
 //         isDeleted: false,
 //         deletedAt: null,
 //       },
@@ -365,7 +404,7 @@ main()
 //   await ensureRoles();
 //   await ensurePermissions();
 //   await ensureRootDepartment();
-//   await ensureExtraDepartments(); // ← إضافة الإدارات العربية
+//   await ensureExtraDepartments();
 //   await ensureAdminUser();
 
 //   console.log('✅ Seed completed');
@@ -378,3 +417,6 @@ main()
 //     await prisma.$disconnect();
 //     process.exit(1);
 //   });
+
+
+

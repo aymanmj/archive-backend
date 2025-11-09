@@ -5,7 +5,8 @@ export type PermissionCode =
   | 'outgoing.read' | 'outgoing.create' | 'outgoing.markDelivered'
   | 'files.read'    | 'files.upload'    | 'files.delete'
   | 'departments.read' | 'departments.create' | 'departments.updateStatus'
-  | 'users.read'
+  | 'users.read'  | 'users.manage'
+  | 'admin.rbac'
   | 'audit.read';
 
 export const PERMISSIONS = {
@@ -28,6 +29,10 @@ export const PERMISSIONS = {
   DEPARTMENTS_UPDATE_STATUS: 'departments.updateStatus',
 
   USERS_READ: 'users.read',
+  USERS_MANAGE: 'users.manage',
+
+   // لو كنت تستعمل هذه الصلاحية في الحماية (last admin check) فهي موجودة في DB لديك
+  ADMIN_RBAC: 'admin.rbac',
 
   AUDIT_READ: 'audit.read',
 } as const;

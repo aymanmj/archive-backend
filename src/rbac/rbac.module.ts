@@ -1,14 +1,31 @@
 // src/rbac/rbac.module.ts
-
 import { Module } from '@nestjs/common';
 import { PrismaModule } from 'src/prisma/prisma.module';
-import { RbacService } from './rbac.service';
 import { RbacController } from './rbac.controller';
+import { RbacService } from './rbac.service';
+import { AuthorizationModule } from 'src/auth/authorization.module';
 
 @Module({
-  imports: [PrismaModule],
-  providers: [RbacService],
+  imports: [PrismaModule, AuthorizationModule], // ✅ استيراد الموديول الذي يُصدّر الخدمة
   controllers: [RbacController],
-  exports: [RbacService],
+  providers: [RbacService],
 })
 export class RbacModule {}
+
+
+
+
+// // src/rbac/rbac.module.ts
+
+// import { Module } from '@nestjs/common';
+// import { PrismaModule } from 'src/prisma/prisma.module';
+// import { RbacService } from './rbac.service';
+// import { RbacController } from './rbac.controller';
+
+// @Module({
+//   imports: [PrismaModule],
+//   providers: [RbacService],
+//   controllers: [RbacController],
+//   exports: [RbacService],
+// })
+// export class RbacModule {}

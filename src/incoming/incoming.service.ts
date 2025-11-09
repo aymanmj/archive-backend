@@ -663,32 +663,32 @@ export class IncomingService {
       documentTitle: string;
       owningDepartmentId: number;
       externalPartyName: string;
-      deliveryMethod: string;
+      deliveryMethod: string; // 'Hand' | 'Mail' | ...
     },
     user: any,
   ) {
     const title = String(payload.documentTitle || '').trim();
     if (!title) throw new BadRequestException('Invalid title');
 
-    if (!payload.owningDepartmentId || isNaN(Number(payload.owningDepartmentId))) {
+    const owningDeptId = Number(payload.owningDepartmentId);
+    if (!owningDeptId || isNaN(owningDeptId)) {
       throw new BadRequestException('Invalid owningDepartmentId');
     }
 
     const extName = String(payload.externalPartyName || '').trim();
     if (!extName) throw new BadRequestException('Invalid externalPartyName');
 
-    // ✅ استخراج userId بطريقة موحدة وآمنة
     const { userId } = extractUserContext(user);
     if (!userId) throw new BadRequestException('Invalid user context');
 
     const year = new Date().getFullYear();
 
     return this.prisma.$transaction(async (tx) => {
+      // 1) أطراف خارجية
       let external = await tx.externalParty.findFirst({
         where: { name: { equals: extName, mode: 'insensitive' } as any },
         select: { id: true },
       });
-
       if (!external) {
         external = await tx.externalParty.create({
           data: { name: extName, status: 'Active' },
@@ -696,50 +696,61 @@ export class IncomingService {
         });
       }
 
+      // 2) IDs للنوع ومستوى السرية
+      const [docType, secLevel] = await Promise.all([
+        tx.documentType.findFirst({ where: { isIncomingType: true }, select: { id: true } }),
+        tx.securityLevel.findFirst({ where: { rankOrder: 0 }, select: { id: true } }), // Public كافتراضي
+      ]);
+      if (!docType) throw new BadRequestException('DocumentType for Incoming not found');
+      if (!secLevel) throw new BadRequestException('Default SecurityLevel not found');
+
+      // 3) إنشاء الوثيقة بالقيم الصحيحة (…Id)
       const document = await tx.document.create({
         data: {
           title,
           currentStatus: 'Registered',
-          documentType: { connect: { id: 1 } },
-          securityLevel: { connect: { id: 1 } },
-          createdByUser: { connect: { id: userId } },
-          owningDepartment: { connect: { id: Number(payload.owningDepartmentId) } },
+          documentTypeId: docType.id,
+          securityLevelId: secLevel.id,
+          createdByUserId: userId,
+          owningDepartmentId: owningDeptId,
         },
-        select: { id: true, title: true },
+        select: { id: true, title: true, createdAt: true },
       });
 
+      // 4) رقم الوارد
       const incomingNumber = await this.generateIncomingNumber(tx, year);
 
+      // 5) سجل الوارد
       const incoming = await tx.incomingRecord.create({
         data: {
           documentId: document.id,
           externalPartyId: external.id,
           receivedDate: new Date(),
-          receivedByUserId: userId,            // ✅ بدون null
+          receivedByUserId: userId,
           incomingNumber,
-          deliveryMethod: payload.deliveryMethod as any,
+          deliveryMethod: payload.deliveryMethod as any, // يتطابق مع enum DeliveryMethod
           urgencyLevel: 'Normal',
         },
         select: {
           id: true,
           incomingNumber: true,
           receivedDate: true,
-          document: { select: { id: true, title: true } },        // ✅ إرجاع العلاقات
-          externalParty: { select: { name: true } },              // ✅ إرجاع العلاقات
+          document: { select: { id: true, title: true } },
+          externalParty: { select: { name: true } },
         },
       });
 
-      // توزيع تلقائي على القسم المالِك
+      // 6) توزيع تلقائي على القسم المالِك
       await tx.incomingDistribution.create({
         data: {
           incomingId: incoming.id,
-          targetDepartmentId: Number(payload.owningDepartmentId),
+          targetDepartmentId: owningDeptId,
           status: 'Open',
           notes: null,
         },
       });
 
-      // سجل تدقيقي
+      // 7) سجل تدقيقي
       await tx.auditTrail.create({
         data: {
           documentId: document.id,
@@ -758,6 +769,107 @@ export class IncomingService {
       };
     });
   }
+
+  // async createIncoming(
+  //   payload: {
+  //     documentTitle: string;
+  //     owningDepartmentId: number;
+  //     externalPartyName: string;
+  //     deliveryMethod: string;
+  //   },
+  //   user: any,
+  // ) {
+  //   const title = String(payload.documentTitle || '').trim();
+  //   if (!title) throw new BadRequestException('Invalid title');
+
+  //   if (!payload.owningDepartmentId || isNaN(Number(payload.owningDepartmentId))) {
+  //     throw new BadRequestException('Invalid owningDepartmentId');
+  //   }
+
+  //   const extName = String(payload.externalPartyName || '').trim();
+  //   if (!extName) throw new BadRequestException('Invalid externalPartyName');
+
+  //   // ✅ استخراج userId بطريقة موحدة وآمنة
+  //   const { userId } = extractUserContext(user);
+  //   if (!userId) throw new BadRequestException('Invalid user context');
+
+  //   const year = new Date().getFullYear();
+
+  //   return this.prisma.$transaction(async (tx) => {
+  //     let external = await tx.externalParty.findFirst({
+  //       where: { name: { equals: extName, mode: 'insensitive' } as any },
+  //       select: { id: true },
+  //     });
+
+  //     if (!external) {
+  //       external = await tx.externalParty.create({
+  //         data: { name: extName, status: 'Active' },
+  //         select: { id: true },
+  //       });
+  //     }
+
+  //     const document = await tx.document.create({
+  //       data: {
+  //         title,
+  //         currentStatus: 'Registered',
+  //         documentType,
+  //         securityLevel,
+  //         createdByUser: userId,
+  //         owningDepartmentId
+  //       },
+  //       select: { id: true, title: true, createdAt: true },
+  //     });
+
+  //     const incomingNumber = await this.generateIncomingNumber(tx, year);
+
+  //     const incoming = await tx.incomingRecord.create({
+  //       data: {
+  //         documentId: document.id,
+  //         externalPartyId: external.id,
+  //         receivedDate: new Date(),
+  //         receivedByUserId: userId,            // ✅ بدون null
+  //         incomingNumber,
+  //         deliveryMethod: payload.deliveryMethod as any,
+  //         urgencyLevel: 'Normal',
+  //       },
+  //       select: {
+  //         id: true,
+  //         incomingNumber: true,
+  //         receivedDate: true,
+  //         document: { select: { id: true, title: true } },        // ✅ إرجاع العلاقات
+  //         externalParty: { select: { name: true } },              // ✅ إرجاع العلاقات
+  //       },
+  //     });
+
+  //     // توزيع تلقائي على القسم المالِك
+  //     await tx.incomingDistribution.create({
+  //       data: {
+  //         incomingId: incoming.id,
+  //         targetDepartmentId: Number(payload.owningDepartmentId),
+  //         status: 'Open',
+  //         notes: null,
+  //       },
+  //     });
+
+  //     // سجل تدقيقي
+  //     await tx.auditTrail.create({
+  //       data: {
+  //         documentId: document.id,
+  //         userId: userId,
+  //         actionType: 'CREATE_INCOMING',
+  //         actionDescription: `إنشاء وارد ${incoming.incomingNumber}`,
+  //       },
+  //     });
+
+  //     return {
+  //       id: String(incoming.id),
+  //       incomingNumber: incoming.incomingNumber,
+  //       receivedDate: incoming.receivedDate,
+  //       externalPartyName: incoming.externalParty?.name ?? extName,
+  //       document: incoming.document,
+  //     };
+  //   });
+  // }
 
   /**
    * إحالة: إنشاء توزيع جديد وقد نغلق السابق افتراضيًا
