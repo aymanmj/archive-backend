@@ -1,122 +1,207 @@
 // src/rbac/rbac.controller.ts
 
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, UseGuards, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  UseGuards,
+  HttpCode,
+} from '@nestjs/common';
 import { RbacService } from './rbac.service';
-import { RequirePermissions } from 'src/auth/permissions.decorator';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
-import { SetUserRolesDto, CreateRoleDto, UpdateRoleDto, SetRolePermissionsDto } from './dto/rbac-dto';
-import { RoleRecipeDto } from './dto/role-recipe.dto';
+import { RequirePermissions } from 'src/auth/permissions.decorator';
+import { PERMISSIONS } from 'src/auth/permissions.constants';
+
+type ApiOk<T> = { success: true; data: T };
+type ApiErr = { success: false; error: { code: string; message: string } };
+type ApiResponse<T> = ApiOk<T> | ApiErr;
 
 @UseGuards(JwtAuthGuard)
-@RequirePermissions('admin.rbac')
+@RequirePermissions(PERMISSIONS.RBAC_MANAGE)
 @Controller('rbac')
 export class RbacController {
-  constructor(private rbac: RbacService) {}
+  constructor(private readonly rbac: RbacService) {}
 
-  // Permissions
-  @Get('permissions')
-  listPermissions() { return this.rbac.listPermissions(); }
-
-  // Roles
+  // ------- Lists -------
   @Get('roles')
-  listRoles() { return this.rbac.listRoles(); }
-
-  @Post('roles')
-  createRole(@Body() b: CreateRoleDto) {
-    return this.rbac.createRole(b.roleName, b.description);
+  @HttpCode(200)
+  async listRoles(): Promise<ApiResponse<any>> {
+    const roles = await this.rbac.listRoles();
+    return { success: true, data: roles };
   }
 
-  @Patch('roles/:id')
-  updateRole(@Param('id', ParseIntPipe) id: number, @Body() b: UpdateRoleDto) {
-    return this.rbac.updateRole(id, b);
+  @Get('permissions')
+  @HttpCode(200)
+  async listPermissions(): Promise<ApiResponse<any>> {
+    const perms = await this.rbac.listPermissions();
+    return { success: true, data: perms };
   }
 
-  @Delete('roles/:id')
-  deleteRole(@Param('id', ParseIntPipe) id: number) {
-    return this.rbac.deleteRole(id);
-  }
-
-  @Post('roles/:id/permissions')
-  setRolePerms(
-    @Param('id', ParseIntPipe) id: number,
-    @Body() b: SetRolePermissionsDto,
-    @Req() req: any, // ⬅️ للحصول على req.user.id
-  ) {
-    return this.rbac.setRolePermissions(id, b.permissions || [], req.user?.id);
-  }
-
-  // Users <-> Roles
+  // ------- User ↔ Roles (GET) -------
   @Get('users/:userId/roles')
-  listUserRoles(@Param('userId', ParseIntPipe) userId: number) {
-    return this.rbac.listUserRoles(userId);
+  @HttpCode(200)
+  async getUserRoles(
+    @Param('userId', ParseIntPipe) userId: number,
+  ): Promise<ApiResponse<{
+    userId: number;
+    roleIds: number[];
+    roles: Array<{ id: number; roleName: string; description?: string | null; isSystem?: boolean }>;
+    count: number;
+  }>> {
+    const dto = await this.rbac.getUserRoles(userId);
+    return { success: true, data: dto };
+  }
+
+  // ✅ alias بصيغة singular لو كانت الواجهة القديمة تستخدمه
+  @Get('user/:userId/roles')
+  @HttpCode(200)
+  async getUserRolesCompat(
+    @Param('userId', ParseIntPipe) userId: number,
+  ): Promise<ApiResponse<any>> {
+    const dto = await this.rbac.getUserRoles(userId);
+    return { success: true, data: dto };
+  }
+
+  // ------- User ↔ Roles (SET) -------
+  // ندعم PATCH (حديث) و POST (توافق)
+  @Patch('users/:userId/roles')
+  @HttpCode(200)
+  async setUserRolesPatch(
+    @Param('userId', ParseIntPipe) userId: number,
+    @Body() body: any,
+  ): Promise<ApiResponse<{ ok: true; userId: number; count: number; roleIds: number[] }>> {
+    const roleIds: number[] = Array.isArray(body?.roleIds)
+      ? body.roleIds
+      : Array.isArray(body?.roles)
+      ? body.roles
+      : [];
+    const result = await this.rbac.setUserRoles(userId, roleIds);
+    return { success: true, data: result };
   }
 
   @Post('users/:userId/roles')
-  setUserRoles(
+  @HttpCode(200)
+  async setUserRolesPost(
     @Param('userId', ParseIntPipe) userId: number,
-    @Body() b: SetUserRolesDto,
-    @Req() req: any, // ⬅️ للحصول على req.user.id
-  ) {
-    return this.rbac.setUserRoles(userId, b.roleIds || [], req.user?.id);
+    @Body() body: any,
+  ): Promise<ApiResponse<{ ok: true; userId: number; count: number; roleIds: number[] }>> {
+    const roleIds: number[] = Array.isArray(body?.roleIds)
+      ? body.roleIds
+      : Array.isArray(body?.roles)
+      ? body.roles
+      : [];
+    const result = await this.rbac.setUserRoles(userId, roleIds);
+    return { success: true, data: result };
   }
 
-  // وصفة/Recipe: إنشاء/تحديث دور وربط صلاحيات محددة دفعة واحدة
-  @Post('recipes')
-  createOrUpdateRecipe(@Body() body: RoleRecipeDto) {
-    return this.rbac.upsertRoleWithPermissions(body);
+  // ------- Role ↔ Permissions -------
+  @Get('roles/:roleId/permissions')
+  @HttpCode(200)
+  async getRolePermissions(
+    @Param('roleId', ParseIntPipe) roleId: number,
+  ): Promise<ApiResponse<{ roleId: number; roleName: string; permissionCodes: string[] }>> {
+    const dto = await this.rbac.getRolePermissions(roleId);
+    return { success: true, data: dto };
+  }
+
+  @Patch('roles/:roleId/permissions')
+  @HttpCode(200)
+  async setRolePermissions(
+    @Param('roleId', ParseIntPipe) roleId: number,
+    @Body() body: any,
+  ): Promise<ApiResponse<{ ok: true; roleId: number; permissionCodes: string[]; count: number }>> {
+    const permissionCodes: string[] = Array.isArray(body?.permissionCodes)
+      ? body.permissionCodes
+      : Array.isArray(body?.permissions)
+      ? body.permissions
+      : [];
+    const dto = await this.rbac.setRolePermissions(roleId, permissionCodes);
+    return { success: true, data: dto };
   }
 }
 
 
 
 
-
 // // src/rbac/rbac.controller.ts
 
-// import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
+
+// import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
 // import { RbacService } from './rbac.service';
-// import { RequirePermissions } from 'src/auth/permissions.decorator';
 // import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
-// import { SetUserRolesDto, CreateRoleDto, UpdateRoleDto, SetRolePermissionsDto } from './dto/rbac-dto';
+// import { RequirePermissions } from 'src/auth/permissions.decorator';
+// import { PERMISSIONS } from 'src/auth/permissions.constants';
 
 // @UseGuards(JwtAuthGuard)
-// @RequirePermissions('admin.rbac')
+// @RequirePermissions(PERMISSIONS.RBAC_MANAGE)
 // @Controller('rbac')
 // export class RbacController {
-//   constructor(private rbac: RbacService) {}
+//   constructor(private readonly rbac: RbacService) {}
 
-//   // Permissions
-//   @Get('permissions')
-//   listPermissions() { return this.rbac.listPermissions(); }
-
-//   // Roles
+//   // ------- Lists -------
 //   @Get('roles')
-//   listRoles() { return this.rbac.listRoles(); }
-
-//   @Post('roles')
-//   createRole(@Body() b: CreateRoleDto) { return this.rbac.createRole(b.roleName, b.description); }
-
-//   @Patch('roles/:id')
-//   updateRole(@Param('id', ParseIntPipe) id: number, @Body() b: UpdateRoleDto) {
-//     return this.rbac.updateRole(id, b);
+//   listRoles() {
+//     return this.rbac.listRoles();
 //   }
 
-//   @Delete('roles/:id')
-//   deleteRole(@Param('id', ParseIntPipe) id: number) { return this.rbac.deleteRole(id); }
-
-//   @Post('roles/:id/permissions')
-//   setRolePerms(@Param('id', ParseIntPipe) id: number, @Body() b: SetRolePermissionsDto) {
-//     return this.rbac.setRolePermissions(id, b.permissions || []);
+//   @Get('permissions')
+//   listPermissions() {
+//     return this.rbac.listPermissions();
 //   }
 
-//   // Users <-> Roles
+//   // ------- User ↔ Roles (GET) -------
 //   @Get('users/:userId/roles')
-//   listUserRoles(@Param('userId', ParseIntPipe) userId: number) {
-//     return this.rbac.listUserRoles(userId);
+//   getUserRoles(@Param('userId', ParseIntPipe) userId: number) {
+//     return this.rbac.getUserRoles(userId);
+//   }
+
+//   // ✅ alias بصيغة singular لو كانت الواجهة القديمة تستخدمه
+//   @Get('user/:userId/roles')
+//   getUserRolesCompat(@Param('userId', ParseIntPipe) userId: number) {
+//     return this.rbac.getUserRoles(userId);
+//   }
+
+//   // ------- User ↔ Roles (SET) -------
+//   // ندعم PATCH (حديث) و POST (توافق)
+//   @Patch('users/:userId/roles')
+//   setUserRolesPatch(@Param('userId', ParseIntPipe) userId: number, @Body() body: any) {
+//     const roleIds: number[] = Array.isArray(body?.roleIds)
+//       ? body.roleIds
+//       : Array.isArray(body?.roles)
+//       ? body.roles
+//       : [];
+//     return this.rbac.setUserRoles(userId, roleIds);
 //   }
 
 //   @Post('users/:userId/roles')
-//   setUserRoles(@Param('userId', ParseIntPipe) userId: number, @Body() b: SetUserRolesDto) {
-//     return this.rbac.setUserRoles(userId, b.roleIds || []);
+//   setUserRolesPost(@Param('userId', ParseIntPipe) userId: number, @Body() body: any) {
+//     const roleIds: number[] = Array.isArray(body?.roleIds)
+//       ? body.roleIds
+//       : Array.isArray(body?.roles)
+//       ? body.roles
+//       : [];
+//     return this.rbac.setUserRoles(userId, roleIds);
+//   }
+
+//   // ------- Role ↔ Permissions -------
+//   @Get('roles/:roleId/permissions')
+//   getRolePermissions(@Param('roleId', ParseIntPipe) roleId: number) {
+//     return this.rbac.getRolePermissions(roleId);
+//   }
+
+//   @Patch('roles/:roleId/permissions')
+//   setRolePermissions(@Param('roleId', ParseIntPipe) roleId: number, @Body() body: any) {
+//     const permissionCodes: string[] = Array.isArray(body?.permissionCodes)
+//       ? body.permissionCodes
+//       : Array.isArray(body?.permissions)
+//       ? body.permissions
+//       : [];
+//     return this.rbac.setRolePermissions(roleId, permissionCodes);
 //   }
 // }
+
+

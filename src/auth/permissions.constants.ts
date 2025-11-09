@@ -7,7 +7,7 @@ export type PermissionCode =
   | 'files.read'    | 'files.upload'    | 'files.delete'
   | 'departments.read' | 'departments.create' | 'departments.updateStatus'
   | 'users.read'  | 'users.manage'
-  | 'admin.rbac'
+  | 'admin.rbac'  | 'rbac.manage'
   | 'audit.read'  |'dashboard.read';
 
 
@@ -46,6 +46,9 @@ export const PERMISSIONS = {
   // Audit / Dashboard
   AUDIT_READ: 'audit.read',
   DASHBOARD_READ: 'dashboard.read',
+
+   RBAC_MANAGE: 'rbac.manage',
+
 } as const;
 
 
