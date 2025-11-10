@@ -4,6 +4,8 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { DeliveryMethod } from '@prisma/client';
+import { AuditService } from 'src/audit/audit.service';
+import { extractClientMeta } from 'src/audit/audit.utils';
 
 type PageParams = {
   page: number;
@@ -11,6 +13,11 @@ type PageParams = {
   q?: string;
   from?: string; // YYYY-MM-DD
   to?: string;   // YYYY-MM-DD
+};
+
+type AuditMeta = {
+  ip?: string | null;
+  workstation?: string | null;
 };
 
 @Injectable()
@@ -299,6 +306,7 @@ export class OutgoingService {
       signedByUserId: number;
     },
     user?: any,
+    meta?: AuditMeta,
   ) {
     const title = String(payload.documentTitle || '').trim();
     if (!title) throw new BadRequestException('Invalid documentTitle');
@@ -367,6 +375,19 @@ export class OutgoingService {
         },
       });
 
+      // ✅ سجل تدقيقي
+      await tx.auditTrail.create({
+        data: {
+          documentId: document.id,
+          userId: Number(user?.id ?? payload.signedByUserId),
+          actionType: 'CREATE_OUTGOING',
+          actionDescription: `إنشاء صادر ${outgoing.outgoingNumber}`,
+          fromIP: meta?.ip ?? undefined,
+          workstationName: meta?.workstation ?? undefined,
+        },
+      });
+
+
       return {
         id: String(outgoing.id),
         outgoingNumber: outgoing.outgoingNumber,
@@ -380,12 +401,31 @@ export class OutgoingService {
     });
   }
 
-  async markDelivered(id: string | number, delivered: boolean, proofPath?: string | null) {
+  async markDelivered(id: string | number, delivered: boolean, proofPath?: string | null, meta?: AuditMeta) {
     const outId = BigInt(id as any);
+
+    // const exists = await this.prisma.outgoingRecord.findUnique({
+    //   where: { id: outId },
+    //   select: { id: true },
+    // });
+    // if (!exists) throw new NotFoundException('Outgoing not found');
+
+    // const updated = await this.prisma.outgoingRecord.update({
+    //   where: { id: outId },
+    //   data: {
+    //     isDelivered: !!delivered,
+    //     deliveryProofPath: proofPath ?? null,
+    //   },
+    //   select: {
+    //     id: true,
+    //     isDelivered: true,
+    //     deliveryProofPath: true,
+    //   },
+    // });
 
     const exists = await this.prisma.outgoingRecord.findUnique({
       where: { id: outId },
-      select: { id: true },
+      select: { id: true, documentId: true },
     });
     if (!exists) throw new NotFoundException('Outgoing not found');
 
@@ -399,6 +439,22 @@ export class OutgoingService {
         id: true,
         isDelivered: true,
         deliveryProofPath: true,
+        documentId: true,
+      },
+    });
+
+
+    // ✅ سجل تدقيقي
+    await this.prisma.auditTrail.create({
+      data: {
+        documentId: updated.documentId!,
+        userId: undefined, // سيُملأ من الـController عند الحاجة
+        actionType: 'DELIVERY_STATUS',
+        actionDescription: updated.isDelivered
+          ? `تأكيد التسليم${updated.deliveryProofPath ? ` (إثبات: ${updated.deliveryProofPath})` : ''}`
+          : `إلغاء/عدم التسليم`,
+        fromIP: meta?.ip ?? undefined,
+        workstationName: meta?.workstation ?? undefined,
       },
     });
 

@@ -290,6 +290,7 @@ model AuditTrail {
   // [NEW] تتبع الطلب
   requestId     String?
   correlationId String?
+  createdAt         DateTime @default(now())
 
   Document Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
   User     User?     @relation(fields: [userId], references: [id], onDelete: SetNull)

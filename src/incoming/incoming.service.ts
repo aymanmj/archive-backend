@@ -13,6 +13,12 @@ type PageParams = {
   to?: string;   // YYYY-MM-DD
 };
 
+type AuditMeta = {
+  ip?: string | null;
+  workstation?: string | null;
+};
+
+
 // ====== تعريب عناوين الأحداث ======
 const AR_ACTIONS: Record<string, string> = {
   // وارد/توزيع
@@ -666,6 +672,7 @@ export class IncomingService {
       deliveryMethod: string; // 'Hand' | 'Mail' | ...
     },
     user: any,
+    meta?: AuditMeta,
   ) {
     const title = String(payload.documentTitle || '').trim();
     if (!title) throw new BadRequestException('Invalid title');
@@ -750,6 +757,16 @@ export class IncomingService {
         },
       });
 
+      // // 7) سجل تدقيقي
+      // await tx.auditTrail.create({
+      //   data: {
+      //     documentId: document.id,
+      //     userId: userId,
+      //     actionType: 'CREATE_INCOMING',
+      //     actionDescription: `إنشاء وارد ${incoming.incomingNumber}`,
+      //   },
+      // });
+
       // 7) سجل تدقيقي
       await tx.auditTrail.create({
         data: {
@@ -757,6 +774,8 @@ export class IncomingService {
           userId: userId,
           actionType: 'CREATE_INCOMING',
           actionDescription: `إنشاء وارد ${incoming.incomingNumber}`,
+          fromIP: meta?.ip ?? undefined,                 // ⬅️ جديد
+          workstationName: meta?.workstation ?? undefined, // ⬅️ جديد
         },
       });
 
@@ -770,107 +789,6 @@ export class IncomingService {
     });
   }
 
-  // async createIncoming(
-  //   payload: {
-  //     documentTitle: string;
-  //     owningDepartmentId: number;
-  //     externalPartyName: string;
-  //     deliveryMethod: string;
-  //   },
-  //   user: any,
-  // ) {
-  //   const title = String(payload.documentTitle || '').trim();
-  //   if (!title) throw new BadRequestException('Invalid title');
-
-  //   if (!payload.owningDepartmentId || isNaN(Number(payload.owningDepartmentId))) {
-  //     throw new BadRequestException('Invalid owningDepartmentId');
-  //   }
-
-  //   const extName = String(payload.externalPartyName || '').trim();
-  //   if (!extName) throw new BadRequestException('Invalid externalPartyName');
-
-  //   // ✅ استخراج userId بطريقة موحدة وآمنة
-  //   const { userId } = extractUserContext(user);
-  //   if (!userId) throw new BadRequestException('Invalid user context');
-
-  //   const year = new Date().getFullYear();
-
-  //   return this.prisma.$transaction(async (tx) => {
-  //     let external = await tx.externalParty.findFirst({
-  //       where: { name: { equals: extName, mode: 'insensitive' } as any },
-  //       select: { id: true },
-  //     });
-
-  //     if (!external) {
-  //       external = await tx.externalParty.create({
-  //         data: { name: extName, status: 'Active' },
-  //         select: { id: true },
-  //       });
-  //     }
-
-  //     const document = await tx.document.create({
-  //       data: {
-  //         title,
-  //         currentStatus: 'Registered',
-  //         documentType,
-  //         securityLevel,
-  //         createdByUser: userId,
-  //         owningDepartmentId
-  //       },
-  //       select: { id: true, title: true, createdAt: true },
-  //     });
-
-  //     const incomingNumber = await this.generateIncomingNumber(tx, year);
-
-  //     const incoming = await tx.incomingRecord.create({
-  //       data: {
-  //         documentId: document.id,
-  //         externalPartyId: external.id,
-  //         receivedDate: new Date(),
-  //         receivedByUserId: userId,            // ✅ بدون null
-  //         incomingNumber,
-  //         deliveryMethod: payload.deliveryMethod as any,
-  //         urgencyLevel: 'Normal',
-  //       },
-  //       select: {
-  //         id: true,
-  //         incomingNumber: true,
-  //         receivedDate: true,
-  //         document: { select: { id: true, title: true } },        // ✅ إرجاع العلاقات
-  //         externalParty: { select: { name: true } },              // ✅ إرجاع العلاقات
-  //       },
-  //     });
-
-  //     // توزيع تلقائي على القسم المالِك
-  //     await tx.incomingDistribution.create({
-  //       data: {
-  //         incomingId: incoming.id,
-  //         targetDepartmentId: Number(payload.owningDepartmentId),
-  //         status: 'Open',
-  //         notes: null,
-  //       },
-  //     });
-
-  //     // سجل تدقيقي
-  //     await tx.auditTrail.create({
-  //       data: {
-  //         documentId: document.id,
-  //         userId: userId,
-  //         actionType: 'CREATE_INCOMING',
-  //         actionDescription: `إنشاء وارد ${incoming.incomingNumber}`,
-  //       },
-  //     });
-
-  //     return {
-  //       id: String(incoming.id),
-  //       incomingNumber: incoming.incomingNumber,
-  //       receivedDate: incoming.receivedDate,
-  //       externalPartyName: incoming.externalParty?.name ?? extName,
-  //       document: incoming.document,
-  //     };
-  //   });
-  // }
-
   /**
    * إحالة: إنشاء توزيع جديد وقد نغلق السابق افتراضيًا
    */
@@ -883,6 +801,7 @@ export class IncomingService {
       closePrevious?: boolean;
     },
     user: any,
+    meta?: AuditMeta,
   ) {
     const incomingId = BigInt(incomingIdStr as any);
     const { userId } = extractUserContext(user);
@@ -945,12 +864,23 @@ export class IncomingService {
         },
       });
 
+      // await tx.auditTrail.create({
+      //   data: {
+      //     documentId: incoming.documentId,
+      //     userId: userId || 1,
+      //     actionType: 'FORWARD',
+      //     actionDescription: `إحالة الوارد إلى قسم ${payload.targetDepartmentId}`,
+      //   },
+      // });
+
       await tx.auditTrail.create({
         data: {
           documentId: incoming.documentId,
           userId: userId || 1,
           actionType: 'FORWARD',
           actionDescription: `إحالة الوارد إلى قسم ${payload.targetDepartmentId}`,
+          fromIP: meta?.ip ?? undefined,
+          workstationName: meta?.workstation ?? undefined,
         },
       });
 
@@ -963,6 +893,7 @@ export class IncomingService {
     status: string,
     note: string | null,
     user: any,
+    meta?: AuditMeta,
   ) {
     const distId = BigInt(distIdStr as any);
     const allowed = ['Open', 'InProgress', 'Closed', 'Escalated'];
@@ -993,14 +924,26 @@ export class IncomingService {
         },
       });
 
+      // await tx.auditTrail.create({
+      //   data: {
+      //     documentId: dist.incoming.documentId,
+      //     userId: userId || 1,
+      //     actionType: 'DIST_STATUS',
+      //     actionDescription: `تغيير حالة التوزيع إلى ${status}${note ? ` — ${note}` : ''}`,
+      //   },
+      // });
+
       await tx.auditTrail.create({
         data: {
           documentId: dist.incoming.documentId,
           userId: userId || 1,
           actionType: 'DIST_STATUS',
           actionDescription: `تغيير حالة التوزيع إلى ${status}${note ? ` — ${note}` : ''}`,
+          fromIP: meta?.ip ?? undefined,
+          workstationName: meta?.workstation ?? undefined,
         },
       });
+
 
       return { ok: true };
     });
@@ -1011,6 +954,7 @@ export class IncomingService {
     assignedToUserId: number,
     note: string | null,
     user: any,
+    meta?: AuditMeta,
   ) {
     const distId = BigInt(distIdStr as any);
     const { userId } = extractUserContext(user);
@@ -1037,20 +981,32 @@ export class IncomingService {
         },
       });
 
+      // await tx.auditTrail.create({
+      //   data: {
+      //     documentId: dist.incoming.documentId,
+      //     userId: userId || 1,
+      //     actionType: 'ASSIGN',
+      //     actionDescription: `تعيين مكلّف ${assignedToUserId}${note ? ` — ${note}` : ''}`,
+      //   },
+      // });
+
       await tx.auditTrail.create({
         data: {
           documentId: dist.incoming.documentId,
           userId: userId || 1,
           actionType: 'ASSIGN',
           actionDescription: `تعيين مكلّف ${assignedToUserId}${note ? ` — ${note}` : ''}`,
+          fromIP: meta?.ip ?? undefined,
+          workstationName: meta?.workstation ?? undefined,
         },
       });
+
 
       return { ok: true };
     });
   }
 
-  async addDistributionNote(distIdStr: string, note: string, user: any) {
+  async addDistributionNote(distIdStr: string, note: string, user: any, meta?: AuditMeta) {
     const distId = BigInt(distIdStr as any);
     const { userId } = extractUserContext(user);
 
@@ -1071,14 +1027,26 @@ export class IncomingService {
         },
       });
 
+      // await tx.auditTrail.create({
+      //   data: {
+      //     documentId: dist.incoming.documentId,
+      //     userId: userId || 1,
+      //     actionType: 'NOTE',
+      //     actionDescription: note,
+      //   },
+      // });
+
       await tx.auditTrail.create({
         data: {
           documentId: dist.incoming.documentId,
           userId: userId || 1,
           actionType: 'NOTE',
           actionDescription: note,
+          fromIP: meta?.ip ?? undefined,
+          workstationName: meta?.workstation ?? undefined,
         },
       });
+
 
       await tx.incomingDistribution.update({
         where: { id: distId },

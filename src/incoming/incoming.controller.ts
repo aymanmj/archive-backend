@@ -14,6 +14,8 @@ import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { RequirePermissions  } from 'src/auth/permissions.decorator';
 import { PERMISSIONS } from 'src/auth/permissions.constants';
 import { IncomingService } from './incoming.service';
+import { AuditService } from 'src/audit/audit.service';
+import { extractClientMeta } from 'src/audit/audit.utils';
 
 @UseGuards(JwtAuthGuard)
 @Controller('incoming')
@@ -102,6 +104,8 @@ export class IncomingController {
       deliveryMethod,
     } = body ?? {};
 
+    const meta = extractClientMeta(req); // { ip, workstation }
+
     if (!documentTitle || !String(documentTitle).trim()) {
       throw new BadRequestException('documentTitle is required');
     }
@@ -123,6 +127,7 @@ export class IncomingController {
         deliveryMethod: String(deliveryMethod),
       },
       req.user,
+      meta,
     );
   }
 
@@ -138,10 +143,13 @@ export class IncomingController {
       note: body?.note ?? null,
       closePrevious: body?.closePrevious !== false,
     };
+
+    const meta = extractClientMeta(req); // { ip, workstation }
+
     if (!payload.targetDepartmentId || isNaN(payload.targetDepartmentId)) {
       throw new BadRequestException('targetDepartmentId is required');
     }
-    return this.incomingService.forwardIncoming(id, payload, req.user);
+    return this.incomingService.forwardIncoming(id, payload, req.user,meta);
   }
 
   @RequirePermissions(PERMISSIONS.INCOMING_UPDATE_STATUS)
@@ -152,12 +160,15 @@ export class IncomingController {
     @Req() req: any,
   ) {
     const status = String(body?.status || '').trim();
+    const meta = extractClientMeta(req); // { ip, workstation }
+
     if (!status) throw new BadRequestException('status is required');
     return this.incomingService.updateDistributionStatus(
       distId,
       status,
       body?.note ?? null,
       req.user,
+      meta,
     );
   }
 
@@ -168,6 +179,8 @@ export class IncomingController {
     @Body() body: any,
     @Req() req: any,
   ) {
+    const meta = extractClientMeta(req); // { ip, workstation }
+
     if (!body?.assignedToUserId || isNaN(Number(body.assignedToUserId))) {
       throw new BadRequestException('assignedToUserId is required');
     }
@@ -176,6 +189,7 @@ export class IncomingController {
       Number(body.assignedToUserId),
       body?.note ?? null,
       req.user,
+      meta,
     );
   }
 
@@ -187,8 +201,10 @@ export class IncomingController {
     @Req() req: any,
   ) {
     const note = String(body?.note || '').trim();
+    const meta = extractClientMeta(req); // { ip, workstation }
+
     if (!note) throw new BadRequestException('note is required');
-    return this.incomingService.addDistributionNote(distId, note, req.user);
+    return this.incomingService.addDistributionNote(distId, note, req.user, meta);
   }
 
   @RequirePermissions(PERMISSIONS.INCOMING_READ)

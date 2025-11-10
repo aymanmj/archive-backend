@@ -64,44 +64,154 @@ export class AuditService {
    * - الترتيب بـ id desc (بديل آمن في حال عدم وجود createdAt).
    * - نطاق from/to يُطبَّق على createdAt إن وُجد؛ نستخدم cast لتجنب أخطاء الأنواع الآن.
    */
+  // async search(params: SearchAuditParams) {
+  //   const page = Math.max(1, Number(params.page) || 1);
+  //   const pageSize = Math.min(100, Number(params.pageSize) || 20);
+
+  //   const where: Prisma.AuditTrailWhereInput = {};
+
+  //   if (params.q && params.q.trim()) {
+  //     const q = params.q.trim();
+  //     where.OR = [
+  //       { actionType: { contains: q, mode: 'insensitive' } },
+  //       { actionDescription: { contains: q, mode: 'insensitive' } },
+  //     ];
+  //   }
+
+  //   if (params.userId && !isNaN(Number(params.userId))) {
+  //     where.userId = Number(params.userId);
+  //   }
+
+  //   if (params.documentId) {
+  //     try {
+  //       where.documentId = BigInt(params.documentId);
+  //     } catch {
+  //       // تجاهل documentId غير الصالح
+  //     }
+  //   }
+
+  //   if (params.actionType && params.actionType.trim()) {
+  //     where.actionType = {
+  //       contains: params.actionType.trim(),
+  //       mode: 'insensitive',
+  //     };
+  //   }
+
+  //   // نطاق التاريخ (اعتمد createdAt إن كان موجودًا في السكيمة)
+  //   // if (params.from || params.to) {
+  //   //   (where as any).createdAt = {};
+  //   //   if (params.from) (where as any).createdAt.gte = params.from;
+  //   //   if (params.to) (where as any).createdAt.lte = params.to;
+  //   // }
+
+  //   if (params.from || params.to) {
+  //     const createdAt: any = {};
+  //     if (params.from) {
+  //       const d = new Date(params.from);
+  //       if (!isNaN(d.getTime())) createdAt.gte = d;
+  //     }
+  //     if (params.to) {
+  //       const d = new Date(params.to);
+  //       if (!isNaN(d.getTime())) createdAt.lte = d;
+  //     }
+  //     if (createdAt.gte || createdAt.lte) {
+  //       (where as any).createdAt = createdAt;
+  //     }
+  //   }
+
+  //   const total = await this.prisma.auditTrail.count({ where });
+
+  //   const rows = await this.prisma.auditTrail.findMany({
+  //     where,
+  //     skip: (page - 1) * pageSize,
+  //     take: pageSize,
+  //     orderBy: { id: 'desc' },
+  //     include: {
+  //       User: { select: { id: true, fullName: true, username: true } },
+  //       Document: { select: { id: true, title: true } },
+  //     } as any,
+  //   });
+
+  //   const items = rows.map((r) => ({
+  //     id: String(r.id),
+  //     actionType: r.actionType,
+  //     actionDescription: r.actionDescription ?? null,
+  //     userId: r.userId ?? null,
+  //     userName: (r as any).User?.fullName ?? null,
+  //     documentId: r.documentId ? String(r.documentId) : null,
+  //     documentTitle: (r as any).Document?.title ?? null,
+  //     fromIP: r.fromIP ?? null,
+  //     workstationName: r.workstationName ?? null,
+  //     createdAt: (r as any).createdAt ?? null,
+  //   }));
+
+  //   return {
+  //     total,
+  //     page,
+  //     pageSize,
+  //     pages: Math.max(1, Math.ceil(total / pageSize)),
+  //     items,
+  //   };
+  //   }
+
   async search(params: SearchAuditParams) {
     const page = Math.max(1, Number(params.page) || 1);
     const pageSize = Math.min(100, Number(params.pageSize) || 20);
 
+    // where مُهيكلة
     const where: Prisma.AuditTrailWhereInput = {};
 
+    // بحث حر يشمل: actionType, actionDescription, user.fullName/username, document.title
     if (params.q && params.q.trim()) {
       const q = params.q.trim();
       where.OR = [
-        { actionType: { contains: q, mode: 'insensitive' } },
-        { actionDescription: { contains: q, mode: 'insensitive' } },
+        { actionType: { contains: q, mode: Prisma.QueryMode.insensitive } },
+        { actionDescription: { contains: q, mode: Prisma.QueryMode.insensitive } },
+        // 🔎 المستخدم (عدّل اسم العلاقة حسب سكيمتك لو مختلف)
+        { User: { is: { fullName: { contains: q, mode: Prisma.QueryMode.insensitive } } } },
+        { User: { is: { username: { contains: q, mode: Prisma.QueryMode.insensitive } } } },
+        // 🔎 الوثيقة (عدّل اسم العلاقة حسب سكيمتك لو مختلف)
+        { Document: { is: { title: { contains: q, mode: Prisma.QueryMode.insensitive } } } },
       ];
     }
 
+    // تصفية حسب المستخدم
     if (params.userId && !isNaN(Number(params.userId))) {
       where.userId = Number(params.userId);
     }
 
+    // تصفية حسب الوثيقة
     if (params.documentId) {
       try {
         where.documentId = BigInt(params.documentId);
       } catch {
-        // تجاهل documentId غير الصالح
+        /* ignore bad doc id */
       }
     }
 
+    // تصفية حسب نوع الإجراء
     if (params.actionType && params.actionType.trim()) {
-      where.actionType = {
-        contains: params.actionType.trim(),
-        mode: 'insensitive',
-      };
+      where.actionType = { contains: params.actionType.trim(), mode: Prisma.QueryMode.insensitive };
     }
 
-    // نطاق التاريخ (اعتمد createdAt إن كان موجودًا في السكيمة)
+    // نطاق التاريخ — يعتمد createdAt (تأكّد من وجوده في الموديل)
     if (params.from || params.to) {
-      (where as any).createdAt = {};
-      if (params.from) (where as any).createdAt.gte = params.from;
-      if (params.to) (where as any).createdAt.lte = params.to;
+      const createdAt: { gte?: Date; lte?: Date } = {};
+      if (params.from) {
+        const d = new Date(params.from);
+        if (!isNaN(d.getTime())) createdAt.gte = d;
+      }
+      if (params.to) {
+        // نهاية اليوم
+        const end = new Date(params.to);
+        if (!isNaN(end.getTime())) {
+          end.setHours(23, 59, 59, 999);
+          createdAt.lte = end;
+        }
+      }
+      if (createdAt.gte || createdAt.lte) {
+        (where as any).createdAt = createdAt;
+      }
     }
 
     const total = await this.prisma.auditTrail.count({ where });
@@ -112,9 +222,10 @@ export class AuditService {
       take: pageSize,
       orderBy: { id: 'desc' },
       include: {
+        // 👇 عدّل أسماء العلاقات إن لزم (user/document أو User/Document)
         User: { select: { id: true, fullName: true, username: true } },
         Document: { select: { id: true, title: true } },
-      } as any,
+      },
     });
 
     const items = rows.map((r) => ({
@@ -124,7 +235,7 @@ export class AuditService {
       userId: r.userId ?? null,
       userName: (r as any).User?.fullName ?? null,
       documentId: r.documentId ? String(r.documentId) : null,
-      documentTitle: (r as any).Document?.title ?? null,
+      documentTitle: (r as any).document?.title ?? null,
       fromIP: r.fromIP ?? null,
       workstationName: r.workstationName ?? null,
       createdAt: (r as any).createdAt ?? null,
@@ -137,7 +248,7 @@ export class AuditService {
       pages: Math.max(1, Math.ceil(total / pageSize)),
       items,
     };
-    }
+  }
 
   /**
    * إرجاع سجل تدقيق واحد مع العلاقات (User/Document)

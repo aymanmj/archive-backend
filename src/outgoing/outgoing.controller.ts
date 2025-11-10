@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   Post,
+  Req,
   Query,
   UseGuards,
 } from '@nestjs/common';
@@ -13,6 +14,8 @@ import { RequirePermissions } from 'src/auth/permissions.decorator';
 import { PERMISSIONS } from 'src/auth/permissions.constants';
 import { OutgoingService } from './outgoing.service';
 import { DeliveryMethod } from '@prisma/client';
+import { AuditService } from 'src/audit/audit.service';
+import { extractClientMeta } from 'src/audit/audit.utils';
 
 @UseGuards(JwtAuthGuard)
 @Controller('outgoing')
@@ -59,7 +62,7 @@ export class OutgoingController {
 
   @RequirePermissions(PERMISSIONS.OUTGOING_CREATE)
   @Post()
-  async create(@Body() body: any) {
+  async create(@Body() body: any, @Req() req: any) {
     const {
       documentTitle,
       owningDepartmentId,
@@ -85,6 +88,7 @@ export class OutgoingController {
       throw new BadRequestException('signedByUserId is required');
     }
 
+    const meta = extractClientMeta(req);
     return this.outgoingService.createOutgoing(
       {
         documentTitle: String(documentTitle).trim(),
@@ -94,16 +98,23 @@ export class OutgoingController {
         issueDate: issueDate ? String(issueDate) : undefined,
         signedByUserId: Number(signedByUserId),
       },
-      undefined,
+      req.user,             // ⬅️ مرر المستخدم
+      meta,      
     );
   }
 
   @RequirePermissions(PERMISSIONS.OUTGOING_MARK_DELIVERED)
   @Post(':id/delivered')
-  async markDelivered(@Param('id') id: string, @Body() body: any) {
+  async markDelivered(@Param('id') id: string, @Body() body: any, @Req() req: any) {
     const delivered = !!body?.delivered;
     const proofPath = body?.proofPath ?? null;
-    return this.outgoingService.markDelivered(id, delivered, proofPath);
+    
+    const meta = extractClientMeta(req);
+    const res = await this.outgoingService.markDelivered(id, delivered, proofPath, meta);
+
+    // (اختياري) لو أردت إضافة userId في التدقيق من هنا بدل الخدمة:
+    // يمكنك تعديل الخدمة لقبول userId أيضًا، أو أضف استدعاء AuditService هنا.
+    return res;
   }
 
   @RequirePermissions(PERMISSIONS.OUTGOING_READ)

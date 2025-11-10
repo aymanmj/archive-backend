@@ -10,6 +10,7 @@ import {
   Post,
   UseGuards,
   HttpCode,
+  Req,
 } from '@nestjs/common';
 import { RbacService } from './rbac.service';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
@@ -56,7 +57,7 @@ export class RbacController {
     return { success: true, data: dto };
   }
 
-  // ✅ alias بصيغة singular لو كانت الواجهة القديمة تستخدمه
+  // alias للتوافق
   @Get('user/:userId/roles')
   @HttpCode(200)
   async getUserRolesCompat(
@@ -67,19 +68,20 @@ export class RbacController {
   }
 
   // ------- User ↔ Roles (SET) -------
-  // ندعم PATCH (حديث) و POST (توافق)
   @Patch('users/:userId/roles')
   @HttpCode(200)
   async setUserRolesPatch(
     @Param('userId', ParseIntPipe) userId: number,
     @Body() body: any,
+    @Req() req: any,
   ): Promise<ApiResponse<{ ok: true; userId: number; count: number; roleIds: number[] }>> {
     const roleIds: number[] = Array.isArray(body?.roleIds)
       ? body.roleIds
       : Array.isArray(body?.roles)
       ? body.roles
       : [];
-    const result = await this.rbac.setUserRoles(userId, roleIds);
+    const actorId = req?.user?.sub ?? null;
+    const result = await this.rbac.setUserRoles(userId, roleIds, actorId);
     return { success: true, data: result };
   }
 
@@ -88,13 +90,15 @@ export class RbacController {
   async setUserRolesPost(
     @Param('userId', ParseIntPipe) userId: number,
     @Body() body: any,
+    @Req() req: any,
   ): Promise<ApiResponse<{ ok: true; userId: number; count: number; roleIds: number[] }>> {
     const roleIds: number[] = Array.isArray(body?.roleIds)
       ? body.roleIds
       : Array.isArray(body?.roles)
       ? body.roles
       : [];
-    const result = await this.rbac.setUserRoles(userId, roleIds);
+    const actorId = req?.user?.sub ?? null;
+    const result = await this.rbac.setUserRoles(userId, roleIds, actorId);
     return { success: true, data: result };
   }
 
@@ -113,13 +117,15 @@ export class RbacController {
   async setRolePermissions(
     @Param('roleId', ParseIntPipe) roleId: number,
     @Body() body: any,
+    @Req() req: any,
   ): Promise<ApiResponse<{ ok: true; roleId: number; permissionCodes: string[]; count: number }>> {
     const permissionCodes: string[] = Array.isArray(body?.permissionCodes)
       ? body.permissionCodes
       : Array.isArray(body?.permissions)
       ? body.permissions
       : [];
-    const dto = await this.rbac.setRolePermissions(roleId, permissionCodes);
+    const actorId = req?.user?.sub ?? null;
+    const dto = await this.rbac.setRolePermissions(roleId, permissionCodes, actorId);
     return { success: true, data: dto };
   }
 }
@@ -129,12 +135,25 @@ export class RbacController {
 
 // // src/rbac/rbac.controller.ts
 
-
-// import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
+// import {
+//   Body,
+//   Controller,
+//   Get,
+//   Param,
+//   ParseIntPipe,
+//   Patch,
+//   Post,
+//   UseGuards,
+//   HttpCode,
+// } from '@nestjs/common';
 // import { RbacService } from './rbac.service';
 // import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 // import { RequirePermissions } from 'src/auth/permissions.decorator';
 // import { PERMISSIONS } from 'src/auth/permissions.constants';
+
+// type ApiOk<T> = { success: true; data: T };
+// type ApiErr = { success: false; error: { code: string; message: string } };
+// type ApiResponse<T> = ApiOk<T> | ApiErr;
 
 // @UseGuards(JwtAuthGuard)
 // @RequirePermissions(PERMISSIONS.RBAC_MANAGE)
@@ -144,64 +163,99 @@ export class RbacController {
 
 //   // ------- Lists -------
 //   @Get('roles')
-//   listRoles() {
-//     return this.rbac.listRoles();
+//   @HttpCode(200)
+//   async listRoles(): Promise<ApiResponse<any>> {
+//     const roles = await this.rbac.listRoles();
+//     return { success: true, data: roles };
 //   }
 
 //   @Get('permissions')
-//   listPermissions() {
-//     return this.rbac.listPermissions();
+//   @HttpCode(200)
+//   async listPermissions(): Promise<ApiResponse<any>> {
+//     const perms = await this.rbac.listPermissions();
+//     return { success: true, data: perms };
 //   }
 
 //   // ------- User ↔ Roles (GET) -------
 //   @Get('users/:userId/roles')
-//   getUserRoles(@Param('userId', ParseIntPipe) userId: number) {
-//     return this.rbac.getUserRoles(userId);
+//   @HttpCode(200)
+//   async getUserRoles(
+//     @Param('userId', ParseIntPipe) userId: number,
+//   ): Promise<ApiResponse<{
+//     userId: number;
+//     roleIds: number[];
+//     roles: Array<{ id: number; roleName: string; description?: string | null; isSystem?: boolean }>;
+//     count: number;
+//   }>> {
+//     const dto = await this.rbac.getUserRoles(userId);
+//     return { success: true, data: dto };
 //   }
 
 //   // ✅ alias بصيغة singular لو كانت الواجهة القديمة تستخدمه
 //   @Get('user/:userId/roles')
-//   getUserRolesCompat(@Param('userId', ParseIntPipe) userId: number) {
-//     return this.rbac.getUserRoles(userId);
+//   @HttpCode(200)
+//   async getUserRolesCompat(
+//     @Param('userId', ParseIntPipe) userId: number,
+//   ): Promise<ApiResponse<any>> {
+//     const dto = await this.rbac.getUserRoles(userId);
+//     return { success: true, data: dto };
 //   }
 
 //   // ------- User ↔ Roles (SET) -------
 //   // ندعم PATCH (حديث) و POST (توافق)
 //   @Patch('users/:userId/roles')
-//   setUserRolesPatch(@Param('userId', ParseIntPipe) userId: number, @Body() body: any) {
+//   @HttpCode(200)
+//   async setUserRolesPatch(
+//     @Param('userId', ParseIntPipe) userId: number,
+//     @Body() body: any,
+//   ): Promise<ApiResponse<{ ok: true; userId: number; count: number; roleIds: number[] }>> {
 //     const roleIds: number[] = Array.isArray(body?.roleIds)
 //       ? body.roleIds
 //       : Array.isArray(body?.roles)
 //       ? body.roles
 //       : [];
-//     return this.rbac.setUserRoles(userId, roleIds);
+//     const result = await this.rbac.setUserRoles(userId, roleIds);
+//     return { success: true, data: result };
 //   }
 
 //   @Post('users/:userId/roles')
-//   setUserRolesPost(@Param('userId', ParseIntPipe) userId: number, @Body() body: any) {
+//   @HttpCode(200)
+//   async setUserRolesPost(
+//     @Param('userId', ParseIntPipe) userId: number,
+//     @Body() body: any,
+//   ): Promise<ApiResponse<{ ok: true; userId: number; count: number; roleIds: number[] }>> {
 //     const roleIds: number[] = Array.isArray(body?.roleIds)
 //       ? body.roleIds
 //       : Array.isArray(body?.roles)
 //       ? body.roles
 //       : [];
-//     return this.rbac.setUserRoles(userId, roleIds);
+//     const result = await this.rbac.setUserRoles(userId, roleIds);
+//     return { success: true, data: result };
 //   }
 
 //   // ------- Role ↔ Permissions -------
 //   @Get('roles/:roleId/permissions')
-//   getRolePermissions(@Param('roleId', ParseIntPipe) roleId: number) {
-//     return this.rbac.getRolePermissions(roleId);
+//   @HttpCode(200)
+//   async getRolePermissions(
+//     @Param('roleId', ParseIntPipe) roleId: number,
+//   ): Promise<ApiResponse<{ roleId: number; roleName: string; permissionCodes: string[] }>> {
+//     const dto = await this.rbac.getRolePermissions(roleId);
+//     return { success: true, data: dto };
 //   }
 
 //   @Patch('roles/:roleId/permissions')
-//   setRolePermissions(@Param('roleId', ParseIntPipe) roleId: number, @Body() body: any) {
+//   @HttpCode(200)
+//   async setRolePermissions(
+//     @Param('roleId', ParseIntPipe) roleId: number,
+//     @Body() body: any,
+//   ): Promise<ApiResponse<{ ok: true; roleId: number; permissionCodes: string[]; count: number }>> {
 //     const permissionCodes: string[] = Array.isArray(body?.permissionCodes)
 //       ? body.permissionCodes
 //       : Array.isArray(body?.permissions)
 //       ? body.permissions
 //       : [];
-//     return this.rbac.setRolePermissions(roleId, permissionCodes);
+//     const dto = await this.rbac.setRolePermissions(roleId, permissionCodes);
+//     return { success: true, data: dto };
 //   }
 // }
-
 
