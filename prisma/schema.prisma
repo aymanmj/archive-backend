@@ -103,6 +103,9 @@ model User {
 
   isSystem              Boolean   @default(false)
 
+  /// جديد: لو true يُجبر على تغيير كلمة المرور عند أول دخول
+  mustChangePassword    Boolean   @default(false)
+
   AuditTrail                    AuditTrail[]
   documentsCreated              Document[]                @relation("UserCreatedDocuments")
   uploadedFiles                 DocumentFile[]            @relation("UserUploadedFiles")
@@ -122,16 +125,6 @@ model User {
   @@index([isActive])
 }
 
-model SecurityLevel {
-  id          Int        @id @default(autoincrement())
-  levelName   String
-  description String?
-  rankOrder   Int
-  documents   Document[]
-
-  @@unique([rankOrder])
-  @@index([levelName])
-}
 
 model DocumentType {
   id             Int        @id @default(autoincrement())
@@ -483,3 +476,16 @@ model RolePermission {
   @@index([roleId])
   @@index([permissionId])
 }
+
+
+model SecurityLevel {
+  id          Int       @id @default(autoincrement())
+  levelName   String
+  description String?
+  rankOrder   Int       @unique
+
+  documents   Document[]
+
+  @@index([levelName])
+}
+

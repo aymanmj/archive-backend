@@ -63,7 +63,7 @@ async function bootstrap() {
     .filter(Boolean);
 
   const devFallback =
-    process.env.NODE_ENV !== 'production' ? ['http://localhost:5173'] : [];
+    process.env.NODE_ENV !== 'production' ? ['http://localhost:5173', 'http://localhost:8080'] : [];
 
   const allowedOrigins = envAllowed.length > 0 ? envAllowed : devFallback;
 

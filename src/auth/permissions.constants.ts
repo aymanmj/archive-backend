@@ -3,10 +3,11 @@
 
 export type PermissionCode =
   | 'incoming.read' | 'incoming.create' | 'incoming.forward' | 'incoming.assign' | 'incoming.updateStatus'
-  | 'outgoing.read' | 'outgoing.create' | 'outgoing.markDelivered' | 'outgoing.updateStatus'
+  | 'outgoing.read' | 'outgoing.create' | 'outgoing.markDelivered' | 'outgoing.updateStatus' | 'outgoing.send'
   | 'files.read'    | 'files.upload'    | 'files.delete'
   | 'departments.read' | 'departments.create' | 'departments.updateStatus'
   | 'users.read'  | 'users.manage'
+  | 'roles.read'  | 'roles.manage'
   | 'admin.rbac'  | 'rbac.manage'
   | 'audit.read'  |'dashboard.read';
 
@@ -48,6 +49,7 @@ export const PERMISSIONS = {
   DASHBOARD_READ: 'dashboard.read',
 
    RBAC_MANAGE: 'rbac.manage',
+   ADMIN_RBAC: 'rbac.manage',
 
 } as const;
 

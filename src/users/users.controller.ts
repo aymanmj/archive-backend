@@ -1,14 +1,9 @@
+// src/users/users.controller.ts
+
+
 import {
-  Controller,
-  Body,
-  Get,
-  Post,
-  Param,
-  Req,
-  UseGuards,
-  ParseIntPipe,
-  BadRequestException,
-  Query,
+  Controller, Body, Get, Post, Param, Req, UseGuards, ParseIntPipe,
+  BadRequestException, Query, Patch,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
@@ -18,6 +13,7 @@ import { RequirePermissions } from 'src/auth/permissions.decorator';
 import { PERMISSIONS } from 'src/auth/permissions.constants';
 import { CreateUserDto } from './dto/create-user.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { ChangePasswordDto } from './dto/change-password.dto';
 
 @UseGuards(JwtAuthGuard)
 @Controller('users')
@@ -43,18 +39,34 @@ export class UsersController {
   // ---------------- CRUD ----------------
   @RequirePermissions([PERMISSIONS.USERS_MANAGE])
   @Post()
-  async create(@Body() dto: CreateUserDto) {
-    return this.usersService.createUser(dto);
+  async create(@Req() req: any, @Body() dto: CreateUserDto) {
+    const actorId = Number(req?.user?.sub) || null;
+    return this.usersService.createUser(dto, actorId);
   }
 
   @RequirePermissions([PERMISSIONS.USERS_MANAGE])
   @Post(':id/reset-password')
-  async resetPassword(@Param('id', ParseIntPipe) id: number, @Body() body: ResetPasswordDto) {
-    return this.usersService.resetPassword(id, body.newPassword);
+  async resetPassword(@Param('id', ParseIntPipe) id: number, @Body() body: ResetPasswordDto, @Req() req: any) {
+    const actorId = Number(req?.user?.sub) || null;
+    return this.usersService.resetPassword(id, body.newPassword, actorId);
+  }
+
+  // إعادة تعيين إلى كلمة مؤقتة + إلزام تغييرها
+  @RequirePermissions([PERMISSIONS.USERS_MANAGE])
+  @Post(':id/reset-to-temporary')
+  async resetToTemporary(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    const actorId = Number(req?.user?.sub) || null;
+    return this.usersService.adminResetToTemporary(id, actorId);
+  }
+
+  // يغيّر المستخدم كلمته بنفسه
+  @Patch('change-password')
+  async changeOwn(@Req() req: any, @Body() body: ChangePasswordDto) {
+    const userId = Number(req?.user?.sub);
+    return this.usersService.changeOwnPassword(userId, body.currentPassword, body.newPassword);
   }
 
   // ---------------- List (رسمي) ----------------
-  // واجهة موحّدة للواجهة الأمامية: /users?search=&page=&pageSize=
   @RequirePermissions(PERMISSIONS.USERS_READ)
   @Get()
   async list(
@@ -65,34 +77,30 @@ export class UsersController {
     const p = Math.max(1, Number(page) || 1);
     const ps = Math.min(100, Math.max(1, Number(pageSize) || 30));
     const data = await this.usersService.list({ search, page: p, pageSize: ps });
-    // شكل موحّد يسهل على الواجهة
     return { success: true, data: { items: data.items, total: data.total, page: p, pageSize: ps } };
   }
 
-  // ---------------- List Basic (توافق قديم) ----------------
+  // ---------------- Basic ----------------
   @RequirePermissions(PERMISSIONS.USERS_READ)
   @Get('list-basic')
   async listBasic(@Query('search') search?: string) {
-    // نعيد مصفوفة بسيطة، مع حقول أكثر فائدة
     const data = await this.usersService.list({ search, page: 1, pageSize: 500 });
     return data.items.map((u) => ({
       id: u.id,
       fullName: u.fullName,
       username: u.username,
-      department: u.department, // {id,name} | null
+      department: u.department,
     }));
   }
 
-  // ---------------- By Department (كما هو) ----------------
+  // ---------------- By Department ----------------
   @RequirePermissions(PERMISSIONS.USERS_READ)
   @Get('by-department/:depId')
   async listByDepartment(@Param('depId', ParseIntPipe) depId: number) {
     const users = await this.prisma.user.findMany({
       where: { isActive: true, departmentId: depId },
       select: {
-        id: true,
-        fullName: true,
-        username: true,
+        id: true, fullName: true, username: true,
         department: { select: { id: true, name: true } },
       },
       orderBy: { fullName: 'asc' },
@@ -104,7 +112,35 @@ export class UsersController {
       department: u.department ? { id: u.department.id, name: u.department.name } : null,
     }));
   }
+
+  @RequirePermissions(PERMISSIONS.USERS_MANAGE)
+  @Get('roles-basic')
+  async rolesBasic() {
+    const roles = await this.prisma.role.findMany({
+      orderBy: { roleName: 'asc' },
+      select: { id: true, roleName: true, isSystem: true },
+    });
+    return roles.map(r => ({ id: r.id, name: r.roleName, isSystem: r.isSystem }));
+  }
+
+  @RequirePermissions(PERMISSIONS.USERS_MANAGE)
+  @Post(':id/roles')
+  async setUserRoles(@Param('id', ParseIntPipe) id: number, @Body() body: { roleIds: number[] }) {
+    const roleIds = Array.isArray(body?.roleIds) ? body.roleIds : [];
+    await this.prisma.userRole.deleteMany({ where: { userId: id } });
+    if (!roleIds.length) return { ok: true, updated: 0 };
+
+    const roles = await this.prisma.role.findMany({
+      where: { id: { in: roleIds } },
+      select: { id: true },
+    });
+    const created = await this.prisma.$transaction(
+      roles.map(r => this.prisma.userRole.create({ data: { userId: id, roleId: r.id } }))
+    );
+    return { ok: true, updated: created.length };
+  }
 }
+
 
 
 
@@ -119,12 +155,13 @@ export class UsersController {
 //   UseGuards,
 //   ParseIntPipe,
 //   BadRequestException,
+//   Query,
 // } from '@nestjs/common';
 // import { UsersService } from './users.service';
 // import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 // import { PrismaService } from 'src/prisma/prisma.service';
 // import { AuthorizationService } from 'src/auth/authorization.service';
-// import { RequirePermissions  } from 'src/auth/permissions.decorator';
+// import { RequirePermissions } from 'src/auth/permissions.decorator';
 // import { PERMISSIONS } from 'src/auth/permissions.constants';
 // import { CreateUserDto } from './dto/create-user.dto';
 // import { ResetPasswordDto } from './dto/reset-password.dto';
@@ -135,10 +172,10 @@ export class UsersController {
 //   constructor(
 //     private usersService: UsersService,
 //     private prisma: PrismaService,
-//     private authz: AuthorizationService, // ⬅️ إضافة الحقل
+//     private authz: AuthorizationService,
 //   ) {}
 
-//   // @RequirePermissions(PERMISSIONS.USERS_READ)
+//   // ---------------- Me ----------------
 //   @Get('me')
 //   async me(@Req() req: any) {
 //     const userId = req?.user?.sub;
@@ -150,9 +187,11 @@ export class UsersController {
 //     return { ...me, permissions: perms };
 //   }
 
-//   @RequirePermissions([PERMISSIONS.USERS_MANAGE]) // أو [PERMISSIONS.USERS_MANAGE, PERMISSIONS.USERS_READ]
+//   // ---------------- CRUD ----------------
+//   @RequirePermissions([PERMISSIONS.USERS_MANAGE])
 //   @Post()
-//   async create(@Body() dto: CreateUserDto) {
+//   async create(@Req() req: any,@Body() dto: CreateUserDto) {
+//     const actorId = Number(req?.user?.sub) || null;
 //     return this.usersService.createUser(dto);
 //   }
 
@@ -162,35 +201,89 @@ export class UsersController {
 //     return this.usersService.resetPassword(id, body.newPassword);
 //   }
 
+//   // ---------------- List (رسمي) ----------------
+//   // واجهة موحّدة للواجهة الأمامية: /users?search=&page=&pageSize=
+//   @RequirePermissions(PERMISSIONS.USERS_READ)
+//   @Get()
+//   async list(
+//     @Query('search') search?: string,
+//     @Query('page') page: string = '1',
+//     @Query('pageSize') pageSize: string = '30',
+//   ) {
+//     const p = Math.max(1, Number(page) || 1);
+//     const ps = Math.min(100, Math.max(1, Number(pageSize) || 30));
+//     const data = await this.usersService.list({ search, page: p, pageSize: ps });
+//     // شكل موحّد يسهل على الواجهة
+//     return { success: true, data: { items: data.items, total: data.total, page: p, pageSize: ps } };
+//   }
+
+//   // ---------------- List Basic (توافق قديم) ----------------
 //   @RequirePermissions(PERMISSIONS.USERS_READ)
 //   @Get('list-basic')
-//   async listBasic() {
-//     const users = await this.prisma.user.findMany({
-//       where: { isActive: true },
-//       select: { id: true, fullName: true, departmentId: true },
-//       orderBy: { fullName: 'asc' },
-//     });
-//     return users.map((u) => ({
+//   async listBasic(@Query('search') search?: string) {
+//     // نعيد مصفوفة بسيطة، مع حقول أكثر فائدة
+//     const data = await this.usersService.list({ search, page: 1, pageSize: 500 });
+//     return data.items.map((u) => ({
 //       id: u.id,
 //       fullName: u.fullName,
-//       departmentId: u.departmentId ?? null,
+//       username: u.username,
+//       department: u.department, // {id,name} | null
 //     }));
 //   }
 
+//   // ---------------- By Department (كما هو) ----------------
 //   @RequirePermissions(PERMISSIONS.USERS_READ)
 //   @Get('by-department/:depId')
 //   async listByDepartment(@Param('depId', ParseIntPipe) depId: number) {
 //     const users = await this.prisma.user.findMany({
 //       where: { isActive: true, departmentId: depId },
-//       select: { id: true, fullName: true, departmentId: true },
+//       select: {
+//         id: true,
+//         fullName: true,
+//         username: true,
+//         department: { select: { id: true, name: true } },
+//       },
 //       orderBy: { fullName: 'asc' },
 //     });
 //     return users.map((u) => ({
 //       id: u.id,
 //       fullName: u.fullName,
-//       departmentId: u.departmentId ?? null,
+//       username: u.username,
+//       department: u.department ? { id: u.department.id, name: u.department.name } : null,
 //     }));
 //   }
+
+//   @RequirePermissions(PERMISSIONS.USERS_MANAGE)
+//   @Get('roles-basic')
+//   async rolesBasic() {
+//     const roles = await this.prisma.role.findMany({
+//       orderBy: { roleName: 'asc' },
+//       select: { id: true, roleName: true, isSystem: true },
+//     });
+//     return roles.map(r => ({ id: r.id, name: r.roleName, isSystem: r.isSystem }));
+//   }
+
+//   @RequirePermissions(PERMISSIONS.USERS_MANAGE)
+//   @Post(':id/roles')
+//   async setUserRoles(
+//     @Param('id', ParseIntPipe) id: number,
+//     @Body() body: { roleIds: number[] }
+//   ) {
+//     const roleIds = Array.isArray(body?.roleIds) ? body.roleIds : [];
+//     if (roleIds.length === 0) return { ok: true, updated: 0 };
+
+//     // حذف القديم ثم إضافة الجديد (أبسط شيء)
+//     await this.prisma.userRole.deleteMany({ where: { userId: id } });
+//     const roles = await this.prisma.role.findMany({
+//       where: { id: { in: roleIds } },
+//       select: { id: true },
+//     });
+//     const created = await this.prisma.$transaction(
+//       roles.map(r => this.prisma.userRole.create({ data: { userId: id, roleId: r.id } }))
+//     );
+//     return { ok: true, updated: created.length };
+//   }
+
 // }
 
 

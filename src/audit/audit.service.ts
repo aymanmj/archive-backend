@@ -58,101 +58,38 @@ export class AuditService {
     });
   }
 
-  /**
-   * بحث متقدم مع ترقيم وإرجاع علاقات المستخدم/الوثيقة (إن وُجدت).
-   * - استخدمنا include بـ User/Document (حرف كبير) بناءً على سكيمة Prisma.
-   * - الترتيب بـ id desc (بديل آمن في حال عدم وجود createdAt).
-   * - نطاق from/to يُطبَّق على createdAt إن وُجد؛ نستخدم cast لتجنب أخطاء الأنواع الآن.
-   */
-  // async search(params: SearchAuditParams) {
-  //   const page = Math.max(1, Number(params.page) || 1);
-  //   const pageSize = Math.min(100, Number(params.pageSize) || 20);
 
-  //   const where: Prisma.AuditTrailWhereInput = {};
+  // alias مريح يوافق الاستدعاءات الموجودة this.audit.add({...})
+  async add(input: {
+    userId?: number | null;
+    documentId?: number | bigint | null;
+    actionType: string;
+    description?: string | null;
+    actionDescription?: string | null; // ⬅️ دعم الاسم القديم أيضاً
+    fromIP?: string | null;
+    workstationName?: string | null;
+    requestId?: string | null;
+    correlationId?: string | null;
+  }) {
+    // جهّز documentId كـ BigInt (أو null)
+    let docId: bigint | null = null;
+    if (input.documentId !== undefined && input.documentId !== null) {
+      docId = typeof input.documentId === 'bigint' ? input.documentId : BigInt(input.documentId);
+    }
 
-  //   if (params.q && params.q.trim()) {
-  //     const q = params.q.trim();
-  //     where.OR = [
-  //       { actionType: { contains: q, mode: 'insensitive' } },
-  //       { actionDescription: { contains: q, mode: 'insensitive' } },
-  //     ];
-  //   }
+    // استخدم أي اسم متاح للوصف
+    const desc = input.description ?? input.actionDescription ?? null;
 
-  //   if (params.userId && !isNaN(Number(params.userId))) {
-  //     where.userId = Number(params.userId);
-  //   }
+    return this.log({
+      userId: input.userId ?? null,
+      documentId: docId,
+      actionType: input.actionType,
+      description: desc,
+      fromIP: input.fromIP ?? null,
+      workstationName: input.workstationName ?? null,
+    });
+  }
 
-  //   if (params.documentId) {
-  //     try {
-  //       where.documentId = BigInt(params.documentId);
-  //     } catch {
-  //       // تجاهل documentId غير الصالح
-  //     }
-  //   }
-
-  //   if (params.actionType && params.actionType.trim()) {
-  //     where.actionType = {
-  //       contains: params.actionType.trim(),
-  //       mode: 'insensitive',
-  //     };
-  //   }
-
-  //   // نطاق التاريخ (اعتمد createdAt إن كان موجودًا في السكيمة)
-  //   // if (params.from || params.to) {
-  //   //   (where as any).createdAt = {};
-  //   //   if (params.from) (where as any).createdAt.gte = params.from;
-  //   //   if (params.to) (where as any).createdAt.lte = params.to;
-  //   // }
-
-  //   if (params.from || params.to) {
-  //     const createdAt: any = {};
-  //     if (params.from) {
-  //       const d = new Date(params.from);
-  //       if (!isNaN(d.getTime())) createdAt.gte = d;
-  //     }
-  //     if (params.to) {
-  //       const d = new Date(params.to);
-  //       if (!isNaN(d.getTime())) createdAt.lte = d;
-  //     }
-  //     if (createdAt.gte || createdAt.lte) {
-  //       (where as any).createdAt = createdAt;
-  //     }
-  //   }
-
-  //   const total = await this.prisma.auditTrail.count({ where });
-
-  //   const rows = await this.prisma.auditTrail.findMany({
-  //     where,
-  //     skip: (page - 1) * pageSize,
-  //     take: pageSize,
-  //     orderBy: { id: 'desc' },
-  //     include: {
-  //       User: { select: { id: true, fullName: true, username: true } },
-  //       Document: { select: { id: true, title: true } },
-  //     } as any,
-  //   });
-
-  //   const items = rows.map((r) => ({
-  //     id: String(r.id),
-  //     actionType: r.actionType,
-  //     actionDescription: r.actionDescription ?? null,
-  //     userId: r.userId ?? null,
-  //     userName: (r as any).User?.fullName ?? null,
-  //     documentId: r.documentId ? String(r.documentId) : null,
-  //     documentTitle: (r as any).Document?.title ?? null,
-  //     fromIP: r.fromIP ?? null,
-  //     workstationName: r.workstationName ?? null,
-  //     createdAt: (r as any).createdAt ?? null,
-  //   }));
-
-  //   return {
-  //     total,
-  //     page,
-  //     pageSize,
-  //     pages: Math.max(1, Math.ceil(total / pageSize)),
-  //     items,
-  //   };
-  //   }
 
   async search(params: SearchAuditParams) {
     const page = Math.max(1, Number(params.page) || 1);
@@ -228,17 +165,30 @@ export class AuditService {
       },
     });
 
+    // const items = rows.map((r) => ({
+    //   id: String(r.id),
+    //   actionType: r.actionType,
+    //   actionDescription: r.actionDescription ?? null,
+    //   userId: r.userId ?? null,
+    //   userName: (r as any).User?.fullName ?? null,
+    //   documentId: r.documentId ? String(r.documentId) : null,
+    //   documentTitle: (r as any).document?.title ?? null,
+    //   fromIP: r.fromIP ?? null,
+    //   workstationName: r.workstationName ?? null,
+    //   createdAt: (r as any).createdAt ?? null,
+    // }));
+
     const items = rows.map((r) => ({
       id: String(r.id),
       actionType: r.actionType,
       actionDescription: r.actionDescription ?? null,
       userId: r.userId ?? null,
-      userName: (r as any).User?.fullName ?? null,
+      userName: r.User?.fullName ?? null,
       documentId: r.documentId ? String(r.documentId) : null,
-      documentTitle: (r as any).document?.title ?? null,
+      documentTitle: r.Document?.title ?? null,
       fromIP: r.fromIP ?? null,
       workstationName: r.workstationName ?? null,
-      createdAt: (r as any).createdAt ?? null,
+      createdAt: r.createdAt ?? null,
     }));
 
     return {

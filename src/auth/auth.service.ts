@@ -28,11 +28,7 @@ export class AuthService {
             Role: {
               select: {
                 roleName: true,
-                RolePermission: {
-                  select: {
-                    Permission: { select: { code: true } },
-                  },
-                },
+                RolePermission: { select: { Permission: { select: { code: true } } } },
               },
             },
           },
@@ -74,7 +70,7 @@ export class AuthService {
       username: u.username,
       departmentId: u.department?.id ?? null,
       roles: u.roles,
-      permissions, // 👈 مهم جدًا
+      permissions,
     };
   }
 
@@ -85,13 +81,10 @@ export class AuthService {
     }
 
     const ok = await bcrypt.compare(password, user.passwordHash || '');
-    if (!ok) {
-      throw new UnauthorizedException('بيانات الدخول غير صحيحة');
-    }
+    if (!ok) throw new UnauthorizedException('بيانات الدخول غير صحيحة');
 
     const pub = this.toPublicUser(user);
     const permissions = this.extractPermissions(user);
-
     const payload = this.buildJwtPayload(pub, permissions);
 
     const expiresSeconds = Number(process.env.JWT_EXPIRES_SECONDS ?? 8 * 60 * 60);
@@ -100,7 +93,8 @@ export class AuthService {
       secret: process.env.JWT_SECRET || 'change_me',
     });
 
-    return { token, user: pub };
+    // 👈 نضيف mustChangePassword ليستعملها الفرونت لإجبار تغيير كلمة المرور
+    return { token, user: pub, mustChangePassword: !!user.mustChangePassword };
   }
 }
 
@@ -133,7 +127,20 @@ export class AuthService {
 //       where: { username },
 //       include: {
 //         department: { select: { id: true, name: true } },
-//         UserRole: { include: { Role: { select: { roleName: true } } } },
+//         UserRole: {
+//           include: {
+//             Role: {
+//               select: {
+//                 roleName: true,
+//                 RolePermission: {
+//                   select: {
+//                     Permission: { select: { code: true } },
+//                   },
+//                 },
+//               },
+//             },
+//           },
+//         },
 //       },
 //     });
 //   }
@@ -154,12 +161,24 @@ export class AuthService {
 //     };
 //   }
 
-//   private buildJwtPayload(u: PublicUser) {
+//   private extractPermissions(dbUser: any): string[] {
+//     const perms = new Set<string>();
+//     for (const ur of dbUser?.UserRole ?? []) {
+//       for (const rp of ur?.Role?.RolePermission ?? []) {
+//         const code = rp?.Permission?.code;
+//         if (code) perms.add(String(code));
+//       }
+//     }
+//     return Array.from(perms);
+//   }
+
+//   private buildJwtPayload(u: PublicUser, permissions: string[]) {
 //     return {
 //       sub: u.id,
 //       username: u.username,
 //       departmentId: u.department?.id ?? null,
 //       roles: u.roles,
+//       permissions, // 👈 مهم جدًا
 //     };
 //   }
 
@@ -175,7 +194,9 @@ export class AuthService {
 //     }
 
 //     const pub = this.toPublicUser(user);
-//     const payload = this.buildJwtPayload(pub);
+//     const permissions = this.extractPermissions(user);
+
+//     const payload = this.buildJwtPayload(pub, permissions);
 
 //     const expiresSeconds = Number(process.env.JWT_EXPIRES_SECONDS ?? 8 * 60 * 60);
 //     const token = await this.jwtService.signAsync(payload, {

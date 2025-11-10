@@ -4,6 +4,7 @@ import { Module } from '@nestjs/common';
 import { PrismaModule } from 'src/prisma/prisma.module';
 import { UsersService } from './users.service';
 import { UsersController } from './users.controller';
+import { AuditModule } from 'src/audit/audit.module';
 
 // ⬅️ الأهم: استيراد AuthModule للحصول على AuthorizationService و Jwt/Pasport context
 import { AuthModule } from 'src/auth/auth.module';
@@ -12,6 +13,7 @@ import { AuthModule } from 'src/auth/auth.module';
   imports: [
     PrismaModule,
     AuthModule, // ⬅️ هذا يحل UnknownDependenciesException
+    AuditModule,
   ],
   controllers: [UsersController],
   providers: [UsersService],

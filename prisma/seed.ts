@@ -72,6 +72,7 @@ async function ensurePermissions() {
     { code: 'file.upload',    description: 'Upload files' },
     { code: 'file.delete',    description: 'Delete/replace files' },
     { code: 'admin.rbac',     description: 'Manage roles/permissions' },
+    { code: 'rbac.manage',     description: 'Manage roles/permissions' },
   ];
 
   // Granular RBAC (أضفنا users.manage هنا)
