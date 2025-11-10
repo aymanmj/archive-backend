@@ -96,6 +96,36 @@ export class AuthService {
     // 👈 نضيف mustChangePassword ليستعملها الفرونت لإجبار تغيير كلمة المرور
     return { token, user: pub, mustChangePassword: !!user.mustChangePassword };
   }
+
+
+  async changePassword(userId: number, currentPassword: string, newPassword: string) {
+  const user = await this.prisma.user.findUnique({ where: { id: userId } });
+  if (!user || user.isDeleted === true || user.isActive === false) {
+    throw new UnauthorizedException('المستخدم غير متاح');
+  }
+
+  const ok = await bcrypt.compare(currentPassword ?? '', user.passwordHash || '');
+  if (!ok) {
+    throw new UnauthorizedException('كلمة المرور الحالية غير صحيحة');
+  }
+
+  if (!newPassword || newPassword.length < 6) {
+    throw new UnauthorizedException('كلمة المرور الجديدة قصيرة جدًا');
+  }
+
+  const same = await bcrypt.compare(newPassword, user.passwordHash || '');
+  if (same) {
+    throw new UnauthorizedException('كلمة المرور الجديدة لا يجب أن تطابق الحالية');
+  }
+
+  const hash = await bcrypt.hash(newPassword, 12);
+  await this.prisma.user.update({
+    where: { id: userId },
+    data: { passwordHash: hash },
+  });
+
+  return { ok: true, message: 'تم تغيير كلمة المرور بنجاح' };
+}
 }
 
 
