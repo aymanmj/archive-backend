@@ -101,10 +101,10 @@ model User {
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
 
-  isSystem              Boolean   @default(false)
+  isSystem Boolean @default(false)
 
   /// جديد: لو true يُجبر على تغيير كلمة المرور عند أول دخول
-  mustChangePassword    Boolean   @default(false)
+  mustChangePassword Boolean @default(false)
 
   AuditTrail                    AuditTrail[]
   documentsCreated              Document[]                @relation("UserCreatedDocuments")
@@ -120,11 +120,12 @@ model User {
   // العكسي لعلاقة currentAssignee
   workflowAssignedInstances WorkflowInstance[] @relation("WorkflowInstanceCurrentAssignee")
 
+  passwordResets PasswordReset[]
+
   @@index([departmentId])
   @@index([securityClearanceRank])
   @@index([isActive])
 }
-
 
 model DocumentType {
   id             Int        @id @default(autoincrement())
@@ -171,14 +172,14 @@ model Document {
   incomingRecord   IncomingRecord?
   OutgoingRecord   OutgoingRecord?
   WorkflowInstance WorkflowInstance[]
-  OCRText          OCRText[]          // [NEW] نصوص OCR
+  OCRText          OCRText[] // [NEW] نصوص OCR
 
   @@index([currentStatus])
   @@index([owningDepartmentId])
   @@index([createdAt])
   @@index([securityLevelId])
   @@index([documentTypeId])
-  @@index([searchVector], type: Gin)  // [NEW] فهرس GIN على الناقل
+  @@index([searchVector], type: Gin) // [NEW] فهرس GIN على الناقل
 }
 
 model DocumentFile {
@@ -235,8 +236,7 @@ model IncomingRecord {
   dueDateForResponse DateTime?
   receivedAt         DateTime       @default(now())
 
-  updatedAt          DateTime       @updatedAt @map("updatedat")
-
+  updatedAt DateTime @updatedAt @map("updatedat")
 
   distributions  IncomingDistribution[]
   document       Document               @relation(fields: [documentId], references: [id], onDelete: Restrict)
@@ -283,7 +283,7 @@ model AuditTrail {
   // [NEW] تتبع الطلب
   requestId     String?
   correlationId String?
-  createdAt         DateTime @default(now())
+  createdAt     DateTime @default(now())
 
   Document Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
   User     User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
@@ -348,14 +348,14 @@ model OutgoingRecord {
 }
 
 model Role {
-  id          Int            @id @default(autoincrement())
-  roleName    String         @unique
-  description String?
-  UserRole    UserRole[]
+  id             Int              @id @default(autoincrement())
+  roleName       String           @unique
+  description    String?
+  UserRole       UserRole[]
   // [NEW]
   RolePermission RolePermission[]
 
-  isSystem      Boolean @default(false)
+  isSystem Boolean @default(false)
 }
 
 model UserRole {
@@ -443,8 +443,8 @@ model NumberSequence {
 // [NEW] OCR Text for FTS
 // =========================
 model OCRText {
-  id         BigInt   @id @default(autoincrement())
-  documentId BigInt
+  id          BigInt   @id @default(autoincrement())
+  documentId  BigInt
   textContent String
   language    String?
   createdAt   DateTime @default(now())
@@ -458,14 +458,14 @@ model OCRText {
 // [NEW] RBAC granular
 // =========================
 model Permission {
-  id          Int               @id @default(autoincrement())
-  code        String            @unique
-  description String?
+  id             Int              @id @default(autoincrement())
+  code           String           @unique
+  description    String?
   RolePermission RolePermission[]
 }
 
 model RolePermission {
-  id           Int        @id @default(autoincrement())
+  id           Int @id @default(autoincrement())
   roleId       Int
   permissionId Int
 
@@ -477,15 +477,28 @@ model RolePermission {
   @@index([permissionId])
 }
 
-
 model SecurityLevel {
-  id          Int       @id @default(autoincrement())
+  id          Int     @id @default(autoincrement())
   levelName   String
   description String?
-  rankOrder   Int       @unique
+  rankOrder   Int     @unique
 
-  documents   Document[]
+  documents Document[]
 
   @@index([levelName])
 }
 
+model PasswordReset {
+  id        Int       @id @default(autoincrement())
+  userId    Int
+  tokenHash String    @db.VarChar(128) // hash للتوكن
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdBy Int? // من أصدر الطلب (أدمن)
+  createdAt DateTime  @default(now())
+
+  User User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}

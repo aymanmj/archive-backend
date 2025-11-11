@@ -19,6 +19,7 @@ import { AuditModule } from './audit/audit.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { HealthController } from './health/health.controller';
 import { RbacModule } from './rbac/rbac.module';
+import { SecurityModule } from './security/security.module';
 
 // ⬇️ جديد
 import { AuthorizationModule } from './auth/authorization.module';
@@ -38,6 +39,7 @@ import { AuthorizationModule } from './auth/authorization.module';
 
     // ⬅️ مهم جدًا: لحقن AuthorizationService داخل PermissionsGuard
     AuthorizationModule,
+    SecurityModule,
   ],
   controllers: [AppController, HealthController],
   providers: [

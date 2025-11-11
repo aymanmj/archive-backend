@@ -1,9 +1,10 @@
 // src/auth/auth.service.ts
 
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import * as crypto from 'crypto';
+import * as bcrypt from 'bcrypt';
+import { Injectable, UnauthorizedException, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
-import * as bcrypt from 'bcrypt';
 
 type PublicUser = {
   id: number;
@@ -119,13 +120,90 @@ export class AuthService {
   }
 
   const hash = await bcrypt.hash(newPassword, 12);
-  await this.prisma.user.update({
-    where: { id: userId },
-    data: { passwordHash: hash },
-  });
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { passwordHash: hash },
+    });
 
-  return { ok: true, message: 'تم تغيير كلمة المرور بنجاح' };
-}
+    return { ok: true, message: 'تم تغيير كلمة المرور بنجاح' };
+  }
+
+  // توليد توكن قوي (32 بايت)
+  private generateResetToken(): string {
+    return crypto.randomBytes(32).toString('hex'); // 64 char
+  }
+
+  private hashToken(token: string): string {
+    // hash ثابت وسريع (sha256) كفاية للتوكنات (ليس كلمات مرور)
+    return crypto.createHash('sha256').update(token).digest('hex');
+  }
+
+  /**
+   * يطلق طلب إعادة تعيين كلمة مرور لمستخدم محدد (يحتاج صلاحية أدمن من الكونترولر).
+   * يعيد لك الرابط الجاهز للاستخدام (نسلمه للمستخدم بأي قناة).
+   */
+  async initiatePasswordReset(forUserId: number, createdByAdminId?: number, ttlMinutes = 30) {
+    const user = await this.prisma.user.findUnique({ where: { id: forUserId } });
+    if (!user || user.isDeleted) throw new NotFoundException('المستخدم غير موجود');
+
+    const token = this.generateResetToken();
+    const tokenHash = this.hashToken(token);
+
+    const expiresAt = new Date(Date.now() + (ttlMinutes || 30) * 60 * 1000);
+
+    await this.prisma.passwordReset.create({
+      data: {
+        userId: user.id,
+        tokenHash,
+        expiresAt,
+        createdBy: createdByAdminId ?? null,
+      },
+    });
+
+    // الرابط النهائي (سيستهلك من الواجهة الأمامية)
+    // لاحظ أننا لا نرسل الـ hash، بل الـ token العادي (لكن نتحقق منه كـ hash)
+    const base = process.env.PUBLIC_APP_ORIGIN || 'http://localhost:8080';
+    const url = `${base}/reset?token=${token}`;
+
+    return { url, expiresAt };
+  }
+
+  /**
+   * إكمال إعادة التعيين: التحقق من التوكن، تعيين كلمة جديدة، تعليم الطلب "مستخدم".
+   */
+  async completePasswordReset(token: string, newPassword: string) {
+    const tokenHash = this.hashToken(token);
+
+    const req = await this.prisma.passwordReset.findFirst({
+      where: {
+        tokenHash,
+        usedAt: null,
+        expiresAt: { gt: new Date() },
+      },
+      include: { User: true },
+    });
+
+    if (!req) throw new BadRequestException('رابط غير صالح أو منتهي الصلاحية');
+
+    if (!req.User || req.User.isDeleted || !req.User.isActive) {
+      throw new ForbiddenException('المستخدم غير صالح');
+    }
+
+    const hash = await bcrypt.hash(newPassword, 12);
+
+    await this.prisma.$transaction([
+      this.prisma.user.update({
+        where: { id: req.userId },
+        data: { passwordHash: hash },
+      }),
+      this.prisma.passwordReset.update({
+        where: { id: req.id },
+        data: { usedAt: new Date() },
+      }),
+    ]);
+
+    return { ok: true };
+  }
 }
 
 
