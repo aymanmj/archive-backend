@@ -1,9 +1,10 @@
 // src/security/security.module.ts
 
 
-import { Module } from '@nestjs/common';
+import { Global, Module } from '@nestjs/common';
 import { LoginThrottleService } from './services/login-throttle.service';
 
+@Global()
 @Module({
   providers: [LoginThrottleService],
   exports: [LoginThrottleService],

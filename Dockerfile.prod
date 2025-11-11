@@ -1,0 +1,26 @@
+# archive-backend/Dockerfile.prod
+
+FROM node:20-alpine AS deps
+WORKDIR /app
+RUN apk add --no-cache python3 make g++ && corepack enable
+COPY package.json pnpm-lock.yaml* ./
+RUN pnpm install --frozen-lockfile
+
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+# لو عندك سكريبت prisma:generate ضمن build، ما يحتاج سطر منفصل
+RUN pnpm build
+
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+# انسخ فقط ما نحتاجه للتشغيل
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/package.json ./
+COPY --from=deps /app/node_modules ./node_modules
+COPY --from=build /app/prisma ./prisma
+
+EXPOSE 3000
+CMD ["node", "dist/main.js"]

@@ -1,3 +1,5 @@
+// src/auth/auth.module.ts
+
 import { Module } from '@nestjs/common';
 import { JwtModule } from '@nestjs/jwt';
 import { PrismaModule } from 'src/prisma/prisma.module';
@@ -8,6 +10,7 @@ import { PassportModule } from '@nestjs/passport';
 import { AuthorizationService } from './authorization.service';
 import { ConfigModule, ConfigService } from '@nestjs/config';
 import { ThrottlerModule } from '@nestjs/throttler';
+import { SecurityModule } from 'src/security/security.module'; // ✅ مهم
 
 @Module({
   imports: [
@@ -15,6 +18,8 @@ import { ThrottlerModule } from '@nestjs/throttler';
     PrismaModule,
     PassportModule.register({ defaultStrategy: 'jwt' }),
     ThrottlerModule.forRoot([{ ttl: 60, limit: 10 }]),
+    // ✅ أضف SecurityModule هنا لكي يتم حقن LoginThrottleService في AuthController
+    SecurityModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       useFactory: (cfg: ConfigService) => ({
@@ -29,8 +34,6 @@ import { ThrottlerModule } from '@nestjs/throttler';
   exports: [AuthService, PassportModule, AuthorizationService, JwtModule],
 })
 export class AuthModule {}
-
-
 
 
 
