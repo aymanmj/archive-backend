@@ -18,7 +18,6 @@ type AuditMeta = {
   workstation?: string | null;
 };
 
-
 // ====== تعريب عناوين الأحداث ======
 const AR_ACTIONS: Record<string, string> = {
   // وارد/توزيع
@@ -53,6 +52,39 @@ export class IncomingService {
   // Helpers
   // =========================
 
+  private likeInsensitive(v: string) {
+    return { contains: v, mode: 'insensitive' as const };
+  }
+
+  private buildDateRange(from?: string, to?: string) {
+    const where: Prisma.IncomingRecordWhereInput = {};
+    const rf: Prisma.DateTimeFilter = {};
+
+    if (from) {
+      const d = new Date(from);
+      if (!isNaN(d.getTime())) rf.gte = d;
+    }
+    if (to) {
+      const d = new Date(to);
+      if (!isNaN(d.getTime())) { d.setHours(23, 59, 59, 999); rf.lte = d; }
+    }
+    if (Object.keys(rf).length > 0) where.receivedDate = rf;
+    return where;
+  }
+
+  private async generateIncomingNumber(tx: Prisma.TransactionClient, year: number) {
+    const prefix = `${year}/`;
+    const count = await tx.incomingRecord.count({
+      where: { incomingNumber: { startsWith: prefix } as any },
+    });
+    const seq = count + 1;
+    return `${prefix}${String(seq).padStart(6, '0')}`;
+  }
+
+  // =========================
+  // Queries (lists & search)
+  // =========================
+
   async getLatestIncoming(page: number, pageSize: number) {
     const rows = await this.prisma.incomingRecord.findMany({
       skip: (page - 1) * pageSize,
@@ -67,11 +99,7 @@ export class IncomingService {
           select: {
             id: true,
             title: true,
-            files: {
-              where: { isLatestVersion: true },
-              select: { id: true },
-              take: 1,
-            },
+            files: { where: { isLatestVersion: true }, select: { id: true }, take: 1 },
           },
         },
         _count: { select: { distributions: true } },
@@ -94,50 +122,6 @@ export class IncomingService {
     };
   }
 
-  private likeInsensitive(v: string) {
-    return { contains: v, mode: 'insensitive' as const };
-  }
-
-  private buildDateRange(from?: string, to?: string) {
-    const where: Prisma.IncomingRecordWhereInput = {};
-    const rf: Prisma.DateTimeFilter = {};
-
-    if (from) {
-      const d = new Date(from);
-      if (!isNaN(d.getTime())) {
-        rf.gte = d;
-      }
-    }
-    if (to) {
-      const d = new Date(to);
-      if (!isNaN(d.getTime())) {
-        d.setHours(23, 59, 59, 999);
-        rf.lte = d;
-      }
-    }
-
-    if (Object.keys(rf).length > 0) {
-      where.receivedDate = rf;
-    }
-    return where;
-  }
-
-  private async generateIncomingNumber(
-    tx: Prisma.TransactionClient,
-    year: number,
-  ) {
-    const prefix = `${year}/`;
-    const count = await tx.incomingRecord.count({
-      where: { incomingNumber: { startsWith: prefix } as any },
-    });
-    const seq = count + 1;
-    return `${prefix}${String(seq).padStart(6, '0')}`;
-  }
-
-  // =========================
-  // Queries (lists & search)
-  // =========================
-
   async listLatestForUser(user: any, take = 20) {
     const items = await this.prisma.incomingRecord.findMany({
       where: {
@@ -159,11 +143,7 @@ export class IncomingService {
           select: {
             id: true,
             title: true,
-            files: {
-              where: { isLatestVersion: true },
-              select: { id: true },
-              take: 1,
-            },
+            files: { where: { isLatestVersion: true }, select: { id: true }, take: 1 },
           },
         },
         _count: { select: { distributions: true } },
@@ -190,12 +170,12 @@ export class IncomingService {
       assigneeId?: string;
       incomingNumber?: string;
       distributionId?: string;
+      scope?: 'overdue' | 'today' | 'week';
     }
   ) {
-    const { page, pageSize, q, from, to } = params;
+    const { page, pageSize, q, from, to, scope } = params;
     const skip = (page - 1) * pageSize;
 
-    // اجلب القسم عند الحاجة
     let effectiveDeptId = user?.departmentId ?? null;
     if (!effectiveDeptId && user?.id) {
       const u = await this.prisma.user.findUnique({
@@ -212,65 +192,67 @@ export class IncomingService {
 
     const dateWhere = this.buildDateRange(from, to);
     const textWhere: Prisma.IncomingRecordWhereInput = q
-      ? {
-          OR: [
-            { incomingNumber: this.likeInsensitive(q) },
-            { document: { title: this.likeInsensitive(q) } },
-            { externalParty: { name: this.likeInsensitive(q) } },
-          ],
-        }
+      ? { OR: [
+          { incomingNumber: this.likeInsensitive(q) },
+          { document: { title: this.likeInsensitive(q) } },
+          { externalParty: { name: this.likeInsensitive(q) } },
+        ] }
       : {};
 
-    // ✅ ابنِ OR بشرطية (مستخدم/قسم)
     const myDeskOr: Prisma.IncomingDistributionWhereInput[] = [];
-    if (user?.id)         myDeskOr.push({ assignedToUserId: Number(user.id) });
-    if (effectiveDeptId)  myDeskOr.push({ targetDepartmentId: Number(effectiveDeptId) });
+    if (user?.id)        myDeskOr.push({ assignedToUserId: Number(user.id) });
+    if (effectiveDeptId) myDeskOr.push({ targetDepartmentId: Number(effectiveDeptId) });
+
+    const now = new Date();
+    let scopeDue: Prisma.DateTimeFilter | undefined;
+    if (scope === 'overdue') scopeDue = { lt: now };
+    else if (scope === 'today') {
+      const start = new Date(now); start.setHours(0,0,0,0);
+      const end   = new Date(now); end.setHours(23,59,59,999);
+      scopeDue = { gte: start, lte: end };
+    } else if (scope === 'week') {
+      const day = now.getDay();
+      const diffToMonday = (day + 6) % 7;
+      const start = new Date(now); start.setDate(now.getDate() - diffToMonday); start.setHours(0,0,0,0);
+      const end   = new Date(start); end.setDate(start.getDate() + 7); end.setMilliseconds(-1);
+      scopeDue = { gte: start, lte: end };
+    }
 
     const whereDist: Prisma.IncomingDistributionWhereInput = {
       ...(myDeskOr.length ? { OR: myDeskOr } : {}),
       incoming: { AND: [dateWhere, textWhere] },
+      status: { in: ['Open','InProgress'] as any },
+      ...(scopeDue ? { dueAt: scopeDue } : {}),
     };
 
-    // فلاتر رأسية من الواجهة (عند اختيارها تُقيّد النتائج)
-    if (typeof filterDeptId === 'number' && !isNaN(filterDeptId)) {
-      whereDist.targetDepartmentId = filterDeptId;
-    }
-    if (typeof filterAssigneeId === 'number' && !isNaN(filterAssigneeId)) {
-      whereDist.assignedToUserId = filterAssigneeId;
-    }
+    if (typeof filterDeptId === 'number' && !isNaN(filterDeptId)) whereDist.targetDepartmentId = filterDeptId;
+    if (typeof filterAssigneeId === 'number' && !isNaN(filterAssigneeId)) whereDist.assignedToUserId = filterAssigneeId;
     if (filterIncomingNum) {
       whereDist.incoming = {
         ...(whereDist.incoming ?? {}),
         incomingNumber: { equals: filterIncomingNum },
       } as any;
     }
-    if (typeof filterDistId === 'bigint') {
-      whereDist.id = filterDistId;
-    }
+    if (typeof filterDistId === 'bigint') whereDist.id = filterDistId;
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.incomingDistribution.findMany({
         where: whereDist,
         select: {
-          id: true,
-          status: true,
-          lastUpdateAt: true,
-          incomingId: true,
-          assignedToUserId: true,
-          targetDepartmentId: true,
+          id: true, status: true, lastUpdateAt: true,
+          incomingId: true, assignedToUserId: true, targetDepartmentId: true,
+          // SLA
+          dueAt: true, priority: true, escalationCount: true,
           incoming: {
             select: {
-              id: true,
-              incomingNumber: true,
-              receivedDate: true,
+              id: true, incomingNumber: true, receivedDate: true,
               externalParty: { select: { name: true } },
               document: { select: { id: true, title: true } },
             },
           },
         },
-        orderBy: [{ lastUpdateAt: 'desc' }],
-        skip,
-        take: pageSize,
+        orderBy: [{ priority: 'desc' }, { dueAt: 'asc' }, { lastUpdateAt: 'desc' }],
+        skip, take: pageSize,
       }),
       this.prisma.incomingDistribution.count({ where: whereDist }),
     ]);
@@ -285,12 +267,14 @@ export class IncomingService {
       receivedDate: d.incoming?.receivedDate,
       externalPartyName: d.incoming?.externalParty?.name ?? '—',
       document: d.incoming?.document || null,
+      // SLA
+      dueAt: d.dueAt ?? null,
+      priority: d.priority ?? 0,
+      escalationCount: d.escalationCount ?? 0,
     }));
 
     return {
-      page,
-      pageSize,
-      total,
+      page, pageSize, total,
       pages: Math.max(1, Math.ceil(total / pageSize)),
       rows,
     };
@@ -302,13 +286,11 @@ export class IncomingService {
 
     const dateWhere = this.buildDateRange(from, to);
     const textWhere: Prisma.IncomingRecordWhereInput = q
-      ? {
-          OR: [
-            { incomingNumber: this.likeInsensitive(q) },
-            { document: { title: this.likeInsensitive(q) } },
-            { externalParty: { name: this.likeInsensitive(q) } },
-          ],
-        }
+      ? { OR: [
+          { incomingNumber: this.likeInsensitive(q) },
+          { document: { title: this.likeInsensitive(q) } },
+          { externalParty: { name: this.likeInsensitive(q) } },
+        ] }
       : {};
 
     const where: Prisma.IncomingRecordWhereInput = { AND: [dateWhere, textWhere] };
@@ -317,26 +299,18 @@ export class IncomingService {
       this.prisma.incomingRecord.findMany({
         where,
         select: {
-          id: true,
-          incomingNumber: true,
-          receivedDate: true,
+          id: true, incomingNumber: true, receivedDate: true,
           externalParty: { select: { name: true } },
           document: {
             select: {
-              id: true,
-              title: true,
-              files: {
-                where: { isLatestVersion: true },
-                select: { id: true },
-                take: 1,
-              },
+              id: true, title: true,
+              files: { where: { isLatestVersion: true }, select: { id: true }, take: 1 },
             },
           },
           _count: { select: { distributions: true } },
         },
         orderBy: [{ receivedDate: 'desc' }],
-        skip,
-        take: pageSize,
+        skip, take: pageSize,
       }),
       this.prisma.incomingRecord.count({ where }),
     ]);
@@ -352,9 +326,7 @@ export class IncomingService {
     }));
 
     return {
-      page,
-      pageSize,
-      total,
+      page, pageSize, total,
       pages: Math.max(1, Math.ceil(total / pageSize)),
       rows,
     };
@@ -372,10 +344,10 @@ export class IncomingService {
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const monthEnd   = todayEnd;
 
-    const whereToday: Prisma.IncomingRecordWhereInput     = { receivedDate: { gte: todayStart,  lte: todayEnd  } };
-    const whereLast7: Prisma.IncomingRecordWhereInput     = { receivedDate: { gte: last7Start,  lte: last7End  } };
-    const whereMonth: Prisma.IncomingRecordWhereInput     = { receivedDate: { gte: monthStart,  lte: monthEnd  } };
-    const whereAll:   Prisma.IncomingRecordWhereInput     = (() => {
+    const whereToday: Prisma.IncomingRecordWhereInput = { receivedDate: { gte: todayStart, lte: todayEnd } };
+    const whereLast7: Prisma.IncomingRecordWhereInput = { receivedDate: { gte: last7Start, lte: last7End } };
+    const whereMonth: Prisma.IncomingRecordWhereInput = { receivedDate: { gte: monthStart, lte: monthEnd } };
+    const whereAll:   Prisma.IncomingRecordWhereInput = (() => {
       if (!range?.from && !range?.to) return {};
       const rf: Prisma.DateTimeFilter = {};
       if (range?.from) { const d = new Date(range.from); if (!isNaN(d.getTime())) rf.gte = d; }
@@ -383,32 +355,21 @@ export class IncomingService {
       return Object.keys(rf).length ? { receivedDate: rf } : {};
     })();
 
-    // ⚠️ استرجاع القسم عند غيابه من التوكن
     let effectiveDeptId = user?.departmentId ?? null;
     if (!effectiveDeptId && user?.id) {
-      const u = await this.prisma.user.findUnique({
-        where: { id: Number(user.id) },
-        select: { departmentId: true },
-      });
+      const u = await this.prisma.user.findUnique({ where: { id: Number(user.id) }, select: { departmentId: true } });
       effectiveDeptId = u?.departmentId ?? null;
     }
 
-    // ✅ ابنِ شروط OR بشرطية
     const myDeskOr: Prisma.IncomingDistributionWhereInput[] = [];
-    if (user?.id)         myDeskOr.push({ assignedToUserId: Number(user.id) });
-    if (effectiveDeptId)  myDeskOr.push({ targetDepartmentId: Number(effectiveDeptId) });
+    if (user?.id)        myDeskOr.push({ assignedToUserId: Number(user.id) });
+    if (effectiveDeptId) myDeskOr.push({ targetDepartmentId: Number(effectiveDeptId) });
 
-    const myDeskBase: Prisma.IncomingDistributionWhereInput =
-      myDeskOr.length ? { OR: myDeskOr } : {};
+    const myDeskBase: Prisma.IncomingDistributionWhereInput = myDeskOr.length ? { OR: myDeskOr } : {};
 
     const [
-      incomingToday,
-      incomingLast7,
-      incomingThisMonth,
-      totalIncoming,
-      myDeskOpen,
-      myDeskInProgress,
-      myDeskClosed,
+      incomingToday, incomingLast7, incomingThisMonth, totalIncoming,
+      myDeskOpen, myDeskInProgress, myDeskClosed,
     ] = await this.prisma.$transaction([
       this.prisma.incomingRecord.count({ where: whereToday }),
       this.prisma.incomingRecord.count({ where: whereLast7 }),
@@ -421,18 +382,9 @@ export class IncomingService {
 
     return {
       totals: {
-        incoming: {
-          today: incomingToday,
-          last7Days: incomingLast7,
-          thisMonth: incomingThisMonth,
-          all: totalIncoming,
-        },
+        incoming: { today: incomingToday, last7Days: incomingLast7, thisMonth: incomingThisMonth, all: totalIncoming },
       },
-      myDesk: {
-        open: myDeskOpen,
-        inProgress: myDeskInProgress,
-        closed: myDeskClosed,
-      },
+      myDesk: { open: myDeskOpen, inProgress: myDeskInProgress, closed: myDeskClosed },
       generatedAt: now,
     };
   }
@@ -463,13 +415,8 @@ export class IncomingService {
               where: { isLatestVersion: true },
               orderBy: { uploadedAt: 'desc' },
               select: {
-                id: true,
-                fileNameOriginal: true,
-                storagePath: true,
-                fileExtension: true,
-                fileSizeBytes: true,
-                uploadedAt: true,
-                versionNumber: true,
+                id: true, fileNameOriginal: true, storagePath: true, fileExtension: true,
+                fileSizeBytes: true, uploadedAt: true, versionNumber: true,
               },
             },
           },
@@ -477,11 +424,10 @@ export class IncomingService {
         distributions: {
           orderBy: { lastUpdateAt: 'desc' },
           select: {
-            id: true,
-            status: true,
-            lastUpdateAt: true,
-            notes: true,
-            assignedToUser: { select: { id: true, fullName: true} },
+            id: true, status: true, lastUpdateAt: true, notes: true,
+            // SLA
+            dueAt: true, priority: true, escalationCount: true,
+            assignedToUser: { select: { id: true, fullName: true } },
             targetDepartment: { select: { id: true, name: true } },
           },
         },
@@ -522,6 +468,10 @@ export class IncomingService {
         assignedToUserName: d.assignedToUser?.fullName ?? null,
         lastUpdateAt: d.lastUpdateAt,
         notes: d.notes ?? null,
+        // SLA
+        dueAt: d.dueAt ?? null,
+        priority: d.priority ?? 0,
+        escalationCount: d.escalationCount ?? 0,
       })),
     };
   }
@@ -530,13 +480,7 @@ export class IncomingService {
     const incomingId = BigInt(id as any);
     const incoming = await this.prisma.incomingRecord.findUnique({
       where: { id: incomingId },
-      select: {
-        id: true,
-        documentId: true,
-        incomingNumber: true,
-        receivedAt: true,
-        receivedDate: true,
-      },
+      select: { id: true, documentId: true, incomingNumber: true, receivedAt: true, receivedDate: true },
     });
     if (!incoming) throw new NotFoundException('Incoming not found');
 
@@ -545,23 +489,15 @@ export class IncomingService {
         where: { documentId: incoming.documentId },
         orderBy: { uploadedAt: 'asc' },
         select: {
-          id: true,
-          fileNameOriginal: true,
-          storagePath: true,
-          uploadedAt: true,
-          versionNumber: true,
-          uploadedByUser: { select: { id: true, fullName: true } },
+          id: true, fileNameOriginal: true, storagePath: true, uploadedAt: true,
+          versionNumber: true, uploadedByUser: { select: { id: true, fullName: true } },
         },
       }),
       this.prisma.incomingDistributionLog.findMany({
         where: { distribution: { incomingId } },
         orderBy: { createdAt: 'asc' },
         select: {
-          id: true,
-          createdAt: true,
-          oldStatus: true,
-          newStatus: true,
-          note: true,
+          id: true, createdAt: true, oldStatus: true, newStatus: true, note: true,
           updatedByUser: { select: { id: true, fullName: true } },
           distribution: {
             select: {
@@ -576,27 +512,15 @@ export class IncomingService {
         where: { documentId: incoming.documentId },
         orderBy: { actionAt: 'asc' },
         select: {
-          id: true,
-          actionType: true,
-          actionDescription: true,
-          actionAt: true,
+          id: true, actionType: true, actionDescription: true, actionAt: true,
           User: { select: { id: true, fullName: true } },
         },
       }),
     ]);
 
-    // 1) نبني rawTimeline من كل المصادر
-    type Raw = {
-      at: Date;
-      actionType?: string;
-      by?: string | null;
-      details?: string | null;
-      link?: string | null;
-    };
-
+    type Raw = { at: Date; actionType?: string; by?: string | null; details?: string | null; link?: string | null; };
     const rawTimeline: Raw[] = [];
 
-    // حدث "إنشاء وارد" كبداية
     rawTimeline.push({
       at: incoming.receivedAt ?? incoming.receivedDate ?? new Date(),
       actionType: 'CREATE_INCOMING',
@@ -604,7 +528,6 @@ export class IncomingService {
       details: incoming.incomingNumber ? `إنشاء وارد ${incoming.incomingNumber}` : null,
     });
 
-    // ملفات
     for (const f of files) {
       rawTimeline.push({
         at: f.uploadedAt,
@@ -615,7 +538,6 @@ export class IncomingService {
       });
     }
 
-    // سجلات التوزيع
     for (const l of dlogs) {
       const changed = l.oldStatus !== l.newStatus;
       rawTimeline.push({
@@ -625,20 +547,13 @@ export class IncomingService {
         details: [
           changed && l.oldStatus ? `من ${l.oldStatus}` : null,
           changed && l.newStatus ? `إلى ${l.newStatus}` : null,
-          l.distribution?.targetDepartment?.name
-            ? `قسم: ${l.distribution?.targetDepartment?.name}`
-            : null,
-          l.distribution?.assignedToUser?.fullName
-            ? `مكلّف: ${l.distribution?.assignedToUser?.fullName}`
-            : null,
+          l.distribution?.targetDepartment?.name ? `قسم: ${l.distribution?.targetDepartment?.name}` : null,
+          l.distribution?.assignedToUser?.fullName ? `مكلّف: ${l.distribution?.assignedToUser?.fullName}` : null,
           l.note ? `ملاحظة: ${l.note}` : null,
-        ]
-          .filter(Boolean)
-          .join(' — ') || null,
+        ].filter(Boolean).join(' — ') || null,
       });
     }
 
-    // AuditTrail (قد يحتوي على ASSIGN, DIST_STATUS, FORWARD, NOTE, …)
     for (const a of audit) {
       rawTimeline.push({
         at: a.actionAt,
@@ -648,14 +563,10 @@ export class IncomingService {
       });
     }
 
-    // 2) هنا نحول rawTimeline إلى timeline مع actionLabel العربي (المكان الذي سألت عنه)
     const timeline = rawTimeline
       .sort((a, b) => a.at.getTime() - b.at.getTime())
-      .map((it) => ({
-        ...it,
-        actionLabel: tAction(it.actionType || (it as any).eventType || (it as any).action || (it as any).kind),
-      }))
-      .reverse(); // عرض الأحدث أولاً في الواجهة
+      .map((it) => ({ ...it, actionLabel: tAction(it.actionType) }))
+      .reverse();
 
     return { items: timeline };
   }
@@ -670,6 +581,8 @@ export class IncomingService {
       owningDepartmentId: number;
       externalPartyName: string;
       deliveryMethod: string; // 'Hand' | 'Mail' | ...
+      dueAt?: string | null;
+      priority?: number | null;
     },
     user: any,
     meta?: AuditMeta,
@@ -691,7 +604,7 @@ export class IncomingService {
     const year = new Date().getFullYear();
 
     return this.prisma.$transaction(async (tx) => {
-      // 1) أطراف خارجية
+      // 1) طرف خارجي
       let external = await tx.externalParty.findFirst({
         where: { name: { equals: extName, mode: 'insensitive' } as any },
         select: { id: true },
@@ -703,15 +616,15 @@ export class IncomingService {
         });
       }
 
-      // 2) IDs للنوع ومستوى السرية
+      // 2) النوع/السرية
       const [docType, secLevel] = await Promise.all([
         tx.documentType.findFirst({ where: { isIncomingType: true }, select: { id: true } }),
-        tx.securityLevel.findFirst({ where: { rankOrder: 0 }, select: { id: true } }), // Public كافتراضي
+        tx.securityLevel.findFirst({ where: { rankOrder: 0 }, select: { id: true } }), // Public
       ]);
       if (!docType) throw new BadRequestException('DocumentType for Incoming not found');
       if (!secLevel) throw new BadRequestException('Default SecurityLevel not found');
 
-      // 3) إنشاء الوثيقة بالقيم الصحيحة (…Id)
+      // 3) الوثيقة
       const document = await tx.document.create({
         data: {
           title,
@@ -735,7 +648,7 @@ export class IncomingService {
           receivedDate: new Date(),
           receivedByUserId: userId,
           incomingNumber,
-          deliveryMethod: payload.deliveryMethod as any, // يتطابق مع enum DeliveryMethod
+          deliveryMethod: payload.deliveryMethod as any,
           urgencyLevel: 'Normal',
         },
         select: {
@@ -747,35 +660,31 @@ export class IncomingService {
         },
       });
 
-      // 6) توزيع تلقائي على القسم المالِك
+      // 6) SLA: نخزن ما يصل من الواجهة، priority افتراضي 0
+      const dueAtDate = payload.dueAt ? new Date(payload.dueAt) : null;
+      const priority  = typeof payload.priority === 'number' ? payload.priority : 0;
+
       await tx.incomingDistribution.create({
         data: {
           incomingId: incoming.id,
           targetDepartmentId: owningDeptId,
           status: 'Open',
           notes: null,
+          dueAt: dueAtDate,
+          priority,
+          lastUpdateAt: new Date(),
         },
       });
 
-      // // 7) سجل تدقيقي
-      // await tx.auditTrail.create({
-      //   data: {
-      //     documentId: document.id,
-      //     userId: userId,
-      //     actionType: 'CREATE_INCOMING',
-      //     actionDescription: `إنشاء وارد ${incoming.incomingNumber}`,
-      //   },
-      // });
-
-      // 7) سجل تدقيقي
+      // 7) تدقيق
       await tx.auditTrail.create({
         data: {
           documentId: document.id,
           userId: userId,
           actionType: 'CREATE_INCOMING',
           actionDescription: `إنشاء وارد ${incoming.incomingNumber}`,
-          fromIP: meta?.ip ?? undefined,                 // ⬅️ جديد
-          workstationName: meta?.workstation ?? undefined, // ⬅️ جديد
+          fromIP: meta?.ip ?? undefined,
+          workstationName: meta?.workstation ?? undefined,
         },
       });
 
@@ -789,9 +698,7 @@ export class IncomingService {
     });
   }
 
-  /**
-   * إحالة: إنشاء توزيع جديد وقد نغلق السابق افتراضيًا
-   */
+  /** إحالة: إنشاء توزيع جديد (مع SLA اختياري) وقد نغلق السابق افتراضيًا */
   async forwardIncoming(
     incomingIdStr: string,
     payload: {
@@ -799,6 +706,8 @@ export class IncomingService {
       assignedToUserId?: number;
       note?: string | null;
       closePrevious?: boolean;
+      dueAt?: string | null;
+      priority?: number | null;
     },
     user: any,
     meta?: AuditMeta,
@@ -836,17 +745,20 @@ export class IncomingService {
         }
       }
 
+      // SLA: نخزن ما يصل من الواجهة، priority افتراضي 0
+      const dueAtDate = payload.dueAt ? new Date(payload.dueAt) : null;
+      const priority  = typeof payload.priority === 'number' ? payload.priority : 0;
+
       const newDist = await tx.incomingDistribution.create({
         data: {
           incomingId,
           targetDepartmentId: payload.targetDepartmentId,
-          assignedToUserId:
-            payload.assignedToUserId !== undefined
-              ? payload.assignedToUserId
-              : null,
+          assignedToUserId: payload.assignedToUserId ?? null,
           status: 'Open',
           notes: payload.note ?? null,
           lastUpdateAt: new Date(),
+          dueAt: dueAtDate,
+          priority,
         },
         select: { id: true },
       });
@@ -856,29 +768,17 @@ export class IncomingService {
           distributionId: newDist.id,
           oldStatus: null,
           newStatus: 'Open',
-          note:
-            payload.note ??
-            `إحالة إلى قسم ${payload.targetDepartmentId}` +
-              (payload.assignedToUserId ? ` ومكلّف ${payload.assignedToUserId}` : ''),
+          note: payload.note ?? `إحالة إلى قسم ${payload.targetDepartmentId}` + (payload.assignedToUserId ? ` ومكلّف ${payload.assignedToUserId}` : ''),
           updatedByUserId: userId || 1,
         },
       });
-
-      // await tx.auditTrail.create({
-      //   data: {
-      //     documentId: incoming.documentId,
-      //     userId: userId || 1,
-      //     actionType: 'FORWARD',
-      //     actionDescription: `إحالة الوارد إلى قسم ${payload.targetDepartmentId}`,
-      //   },
-      // });
 
       await tx.auditTrail.create({
         data: {
           documentId: incoming.documentId,
           userId: userId || 1,
           actionType: 'FORWARD',
-          actionDescription: `إحالة الوارد إلى قسم ${payload.targetDepartmentId}`,
+        actionDescription: `إحالة الوارد إلى قسم ${payload.targetDepartmentId}`,
           fromIP: meta?.ip ?? undefined,
           workstationName: meta?.workstation ?? undefined,
         },
@@ -897,9 +797,7 @@ export class IncomingService {
   ) {
     const distId = BigInt(distIdStr as any);
     const allowed = ['Open', 'InProgress', 'Closed', 'Escalated'];
-    if (!allowed.includes(status)) {
-      throw new BadRequestException('Invalid status');
-    }
+    if (!allowed.includes(status)) throw new BadRequestException('Invalid status');
     const { userId } = extractUserContext(user);
 
     return this.prisma.$transaction(async (tx) => {
@@ -924,15 +822,6 @@ export class IncomingService {
         },
       });
 
-      // await tx.auditTrail.create({
-      //   data: {
-      //     documentId: dist.incoming.documentId,
-      //     userId: userId || 1,
-      //     actionType: 'DIST_STATUS',
-      //     actionDescription: `تغيير حالة التوزيع إلى ${status}${note ? ` — ${note}` : ''}`,
-      //   },
-      // });
-
       await tx.auditTrail.create({
         data: {
           documentId: dist.incoming.documentId,
@@ -944,6 +833,58 @@ export class IncomingService {
         },
       });
 
+      return { ok: true };
+    });
+  }
+
+  async updateDistributionSLA(
+    distIdStr: string,
+    payload: { dueAt?: string | null; priority?: number | null },
+    user: any,
+    meta?: AuditMeta,
+  ) {
+    const distId = BigInt(distIdStr as any);
+    const { userId } = extractUserContext(user);
+
+    const dueAtDate = payload.dueAt ? new Date(payload.dueAt) : null;
+    const priority  = typeof payload.priority === 'number' ? payload.priority : undefined;
+
+    return this.prisma.$transaction(async (tx) => {
+      const dist = await tx.incomingDistribution.findUnique({
+        where: { id: distId },
+        select: { id: true, incoming: { select: { documentId: true } } },
+      });
+      if (!dist) throw new NotFoundException('Distribution not found');
+
+      await tx.incomingDistribution.update({
+        where: { id: distId },
+        data: {
+          ...(payload.dueAt !== undefined ? { dueAt: dueAtDate } : {}),
+          ...(priority !== undefined ? { priority } : {}),
+          lastUpdateAt: new Date(),
+        },
+      });
+
+      await tx.incomingDistributionLog.create({
+        data: {
+          distributionId: distId,
+          oldStatus: null,
+          newStatus: null,
+          note: `تحديث SLA: dueAt=${dueAtDate ?? '—'}, priority=${priority ?? '—'}`,
+          updatedByUserId: userId || 1,
+        },
+      });
+
+      await tx.auditTrail.create({
+        data: {
+          documentId: dist.incoming.documentId,
+          userId: userId || 1,
+          actionType: 'UPDATE_DISTRIBUTION',
+          actionDescription: `تحديث SLA للتوزيع`,
+          fromIP: meta?.ip ?? undefined,
+          workstationName: meta?.workstation ?? undefined,
+        },
+      });
 
       return { ok: true };
     });
@@ -981,15 +922,6 @@ export class IncomingService {
         },
       });
 
-      // await tx.auditTrail.create({
-      //   data: {
-      //     documentId: dist.incoming.documentId,
-      //     userId: userId || 1,
-      //     actionType: 'ASSIGN',
-      //     actionDescription: `تعيين مكلّف ${assignedToUserId}${note ? ` — ${note}` : ''}`,
-      //   },
-      // });
-
       await tx.auditTrail.create({
         data: {
           documentId: dist.incoming.documentId,
@@ -1001,6 +933,10 @@ export class IncomingService {
         },
       });
 
+      await tx.incomingDistribution.update({
+        where: { id: distId },
+        data: { lastUpdateAt: new Date() },
+      });
 
       return { ok: true };
     });
@@ -1027,15 +963,6 @@ export class IncomingService {
         },
       });
 
-      // await tx.auditTrail.create({
-      //   data: {
-      //     documentId: dist.incoming.documentId,
-      //     userId: userId || 1,
-      //     actionType: 'NOTE',
-      //     actionDescription: note,
-      //   },
-      // });
-
       await tx.auditTrail.create({
         data: {
           documentId: dist.incoming.documentId,
@@ -1046,7 +973,6 @@ export class IncomingService {
           workstationName: meta?.workstation ?? undefined,
         },
       });
-
 
       await tx.incomingDistribution.update({
         where: { id: distId },
@@ -1078,7 +1004,7 @@ export class IncomingService {
     return { days: n, series: out };
   }
 
-  // *** My-desk status distribution (يعتمد على user) ***
+  // *** My-desk status distribution ***
   async myDeskStatus(reqUser: any) {
     const base: Prisma.IncomingDistributionWhereInput = {
       OR: [
@@ -1093,10 +1019,7 @@ export class IncomingService {
     ]);
     return { open, inProgress: prog, closed };
   }
-
 }
-
-
 
 
 
@@ -1115,14 +1038,28 @@ export class IncomingService {
 //   to?: string;   // YYYY-MM-DD
 // };
 
+// type AuditMeta = {
+//   ip?: string | null;
+//   workstation?: string | null;
+// };
 
+// // ====== تعريب عناوين الأحداث ======
 // const AR_ACTIONS: Record<string, string> = {
+//   // وارد/توزيع
 //   CREATE_INCOMING: 'إنشاء وارد',
 //   ASSIGN: 'تعيين مكلّف',
 //   UPDATE_DISTRIBUTION: 'تحديث توزيع',
 //   DIST_STATUS: 'تغيير حالة التوزيع',
+//   NOTE: 'ملاحظة',
+
+//   // ملفات
+//   FILE_UPLOADED: 'تم رفع ملف',
+//   FILE_DOWNLOADED: 'تم تنزيل ملف',
+
+//   // Workflow / إحالة
 //   REVIEWED: 'تمت المراجعة',
 //   FORWARDED: 'تمت الإحالة',
+//   FORWARD: 'تمت الإحالة',
 //   APPROVED: 'تمت الموافقة',
 //   REJECTED: 'تم الرفض',
 //   COMMENT: 'تعليق',
@@ -1132,13 +1069,45 @@ export class IncomingService {
 //   return (code && AR_ACTIONS[code]) || (code ?? 'حدث');
 // }
 
-
 // @Injectable()
 // export class IncomingService {
 //   constructor(private prisma: PrismaService) {}
 
 //   // =========================
 //   // Helpers
+//   // =========================
+
+//   private likeInsensitive(v: string) {
+//     return { contains: v, mode: 'insensitive' as const };
+//   }
+
+//   private buildDateRange(from?: string, to?: string) {
+//     const where: Prisma.IncomingRecordWhereInput = {};
+//     const rf: Prisma.DateTimeFilter = {};
+
+//     if (from) {
+//       const d = new Date(from);
+//       if (!isNaN(d.getTime())) rf.gte = d;
+//     }
+//     if (to) {
+//       const d = new Date(to);
+//       if (!isNaN(d.getTime())) { d.setHours(23, 59, 59, 999); rf.lte = d; }
+//     }
+//     if (Object.keys(rf).length > 0) where.receivedDate = rf;
+//     return where;
+//   }
+
+//   private async generateIncomingNumber(tx: Prisma.TransactionClient, year: number) {
+//     const prefix = `${year}/`;
+//     const count = await tx.incomingRecord.count({
+//       where: { incomingNumber: { startsWith: prefix } as any },
+//     });
+//     const seq = count + 1;
+//     return `${prefix}${String(seq).padStart(6, '0')}`;
+//   }
+
+//   // =========================
+//   // Queries (lists & search)
 //   // =========================
 
 //   async getLatestIncoming(page: number, pageSize: number) {
@@ -1155,11 +1124,7 @@ export class IncomingService {
 //           select: {
 //             id: true,
 //             title: true,
-//             files: {
-//               where: { isLatestVersion: true },
-//               select: { id: true },
-//               take: 1,
-//             },
+//             files: { where: { isLatestVersion: true }, select: { id: true }, take: 1 },
 //           },
 //         },
 //         _count: { select: { distributions: true } },
@@ -1182,50 +1147,6 @@ export class IncomingService {
 //     };
 //   }
 
-//   private likeInsensitive(v: string) {
-//     return { contains: v, mode: 'insensitive' as const };
-//   }
-
-//   private buildDateRange(from?: string, to?: string) {
-//     const where: Prisma.IncomingRecordWhereInput = {};
-//     const rf: Prisma.DateTimeFilter = {};
-
-//     if (from) {
-//       const d = new Date(from);
-//       if (!isNaN(d.getTime())) {
-//         rf.gte = d;
-//       }
-//     }
-//     if (to) {
-//       const d = new Date(to);
-//       if (!isNaN(d.getTime())) {
-//         d.setHours(23, 59, 59, 999);
-//         rf.lte = d;
-//       }
-//     }
-
-//     if (Object.keys(rf).length > 0) {
-//       where.receivedDate = rf;
-//     }
-//     return where;
-//   }
-
-//   private async generateIncomingNumber(
-//     tx: Prisma.TransactionClient,
-//     year: number,
-//   ) {
-//     const prefix = `${year}/`;
-//     const count = await tx.incomingRecord.count({
-//       where: { incomingNumber: { startsWith: prefix } as any },
-//     });
-//     const seq = count + 1;
-//     return `${prefix}${String(seq).padStart(6, '0')}`;
-//   }
-
-//   // =========================
-//   // Queries (lists & search)
-//   // =========================
-
 //   async listLatestForUser(user: any, take = 20) {
 //     const items = await this.prisma.incomingRecord.findMany({
 //       where: {
@@ -1247,11 +1168,7 @@ export class IncomingService {
 //           select: {
 //             id: true,
 //             title: true,
-//             files: {
-//               where: { isLatestVersion: true },
-//               select: { id: true },
-//               take: 1,
-//             },
+//             files: { where: { isLatestVersion: true }, select: { id: true }, take: 1 },
 //           },
 //         },
 //         _count: { select: { distributions: true } },
@@ -1278,12 +1195,12 @@ export class IncomingService {
 //       assigneeId?: string;
 //       incomingNumber?: string;
 //       distributionId?: string;
+//       scope?: 'overdue' | 'today' | 'week';
 //     }
 //   ) {
-//     const { page, pageSize, q, from, to } = params;
+//     const { page, pageSize, q, from, to, scope } = params;
 //     const skip = (page - 1) * pageSize;
 
-//     // اجلب القسم عند الحاجة
 //     let effectiveDeptId = user?.departmentId ?? null;
 //     if (!effectiveDeptId && user?.id) {
 //       const u = await this.prisma.user.findUnique({
@@ -1300,65 +1217,67 @@ export class IncomingService {
 
 //     const dateWhere = this.buildDateRange(from, to);
 //     const textWhere: Prisma.IncomingRecordWhereInput = q
-//       ? {
-//           OR: [
-//             { incomingNumber: this.likeInsensitive(q) },
-//             { document: { title: this.likeInsensitive(q) } },
-//             { externalParty: { name: this.likeInsensitive(q) } },
-//           ],
-//         }
+//       ? { OR: [
+//           { incomingNumber: this.likeInsensitive(q) },
+//           { document: { title: this.likeInsensitive(q) } },
+//           { externalParty: { name: this.likeInsensitive(q) } },
+//         ] }
 //       : {};
 
-//     // ✅ ابنِ OR بشرطية (مستخدم/قسم)
 //     const myDeskOr: Prisma.IncomingDistributionWhereInput[] = [];
-//     if (user?.id)         myDeskOr.push({ assignedToUserId: Number(user.id) });
-//     if (effectiveDeptId)  myDeskOr.push({ targetDepartmentId: Number(effectiveDeptId) });
+//     if (user?.id)        myDeskOr.push({ assignedToUserId: Number(user.id) });
+//     if (effectiveDeptId) myDeskOr.push({ targetDepartmentId: Number(effectiveDeptId) });
+
+//     const now = new Date();
+//     let scopeDue: Prisma.DateTimeFilter | undefined;
+//     if (scope === 'overdue') scopeDue = { lt: now };
+//     else if (scope === 'today') {
+//       const start = new Date(now); start.setHours(0,0,0,0);
+//       const end   = new Date(now); end.setHours(23,59,59,999);
+//       scopeDue = { gte: start, lte: end };
+//     } else if (scope === 'week') {
+//       const day = now.getDay();
+//       const diffToMonday = (day + 6) % 7;
+//       const start = new Date(now); start.setDate(now.getDate() - diffToMonday); start.setHours(0,0,0,0);
+//       const end   = new Date(start); end.setDate(start.getDate() + 7); end.setMilliseconds(-1);
+//       scopeDue = { gte: start, lte: end };
+//     }
 
 //     const whereDist: Prisma.IncomingDistributionWhereInput = {
 //       ...(myDeskOr.length ? { OR: myDeskOr } : {}),
 //       incoming: { AND: [dateWhere, textWhere] },
+//       status: { in: ['Open','InProgress'] as any },
+//       ...(scopeDue ? { dueAt: scopeDue } : {}),
 //     };
 
-//     // فلاتر رأسية من الواجهة (عند اختيارها تُقيّد النتائج)
-//     if (typeof filterDeptId === 'number' && !isNaN(filterDeptId)) {
-//       whereDist.targetDepartmentId = filterDeptId;
-//     }
-//     if (typeof filterAssigneeId === 'number' && !isNaN(filterAssigneeId)) {
-//       whereDist.assignedToUserId = filterAssigneeId;
-//     }
+//     if (typeof filterDeptId === 'number' && !isNaN(filterDeptId)) whereDist.targetDepartmentId = filterDeptId;
+//     if (typeof filterAssigneeId === 'number' && !isNaN(filterAssigneeId)) whereDist.assignedToUserId = filterAssigneeId;
 //     if (filterIncomingNum) {
 //       whereDist.incoming = {
 //         ...(whereDist.incoming ?? {}),
 //         incomingNumber: { equals: filterIncomingNum },
 //       } as any;
 //     }
-//     if (typeof filterDistId === 'bigint') {
-//       whereDist.id = filterDistId;
-//     }
+//     if (typeof filterDistId === 'bigint') whereDist.id = filterDistId;
 
 //     const [items, total] = await this.prisma.$transaction([
 //       this.prisma.incomingDistribution.findMany({
 //         where: whereDist,
 //         select: {
-//           id: true,
-//           status: true,
-//           lastUpdateAt: true,
-//           incomingId: true,
-//           assignedToUserId: true,
-//           targetDepartmentId: true,
+//           id: true, status: true, lastUpdateAt: true,
+//           incomingId: true, assignedToUserId: true, targetDepartmentId: true,
+//           // SLA
+//           dueAt: true, priority: true, escalationCount: true,
 //           incoming: {
 //             select: {
-//               id: true,
-//               incomingNumber: true,
-//               receivedDate: true,
+//               id: true, incomingNumber: true, receivedDate: true,
 //               externalParty: { select: { name: true } },
 //               document: { select: { id: true, title: true } },
 //             },
 //           },
 //         },
-//         orderBy: [{ lastUpdateAt: 'desc' }],
-//         skip,
-//         take: pageSize,
+//         orderBy: [{ priority: 'desc' }, { dueAt: 'asc' }, { lastUpdateAt: 'desc' }],
+//         skip, take: pageSize,
 //       }),
 //       this.prisma.incomingDistribution.count({ where: whereDist }),
 //     ]);
@@ -1373,12 +1292,14 @@ export class IncomingService {
 //       receivedDate: d.incoming?.receivedDate,
 //       externalPartyName: d.incoming?.externalParty?.name ?? '—',
 //       document: d.incoming?.document || null,
+//       // SLA
+//       dueAt: d.dueAt ?? null,
+//       priority: d.priority ?? 0,
+//       escalationCount: d.escalationCount ?? 0,
 //     }));
 
 //     return {
-//       page,
-//       pageSize,
-//       total,
+//       page, pageSize, total,
 //       pages: Math.max(1, Math.ceil(total / pageSize)),
 //       rows,
 //     };
@@ -1390,13 +1311,11 @@ export class IncomingService {
 
 //     const dateWhere = this.buildDateRange(from, to);
 //     const textWhere: Prisma.IncomingRecordWhereInput = q
-//       ? {
-//           OR: [
-//             { incomingNumber: this.likeInsensitive(q) },
-//             { document: { title: this.likeInsensitive(q) } },
-//             { externalParty: { name: this.likeInsensitive(q) } },
-//           ],
-//         }
+//       ? { OR: [
+//           { incomingNumber: this.likeInsensitive(q) },
+//           { document: { title: this.likeInsensitive(q) } },
+//           { externalParty: { name: this.likeInsensitive(q) } },
+//         ] }
 //       : {};
 
 //     const where: Prisma.IncomingRecordWhereInput = { AND: [dateWhere, textWhere] };
@@ -1405,26 +1324,18 @@ export class IncomingService {
 //       this.prisma.incomingRecord.findMany({
 //         where,
 //         select: {
-//           id: true,
-//           incomingNumber: true,
-//           receivedDate: true,
+//           id: true, incomingNumber: true, receivedDate: true,
 //           externalParty: { select: { name: true } },
 //           document: {
 //             select: {
-//               id: true,
-//               title: true,
-//               files: {
-//                 where: { isLatestVersion: true },
-//                 select: { id: true },
-//                 take: 1,
-//               },
+//               id: true, title: true,
+//               files: { where: { isLatestVersion: true }, select: { id: true }, take: 1 },
 //             },
 //           },
 //           _count: { select: { distributions: true } },
 //         },
 //         orderBy: [{ receivedDate: 'desc' }],
-//         skip,
-//         take: pageSize,
+//         skip, take: pageSize,
 //       }),
 //       this.prisma.incomingRecord.count({ where }),
 //     ]);
@@ -1440,9 +1351,7 @@ export class IncomingService {
 //     }));
 
 //     return {
-//       page,
-//       pageSize,
-//       total,
+//       page, pageSize, total,
 //       pages: Math.max(1, Math.ceil(total / pageSize)),
 //       rows,
 //     };
@@ -1460,10 +1369,10 @@ export class IncomingService {
 //     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
 //     const monthEnd   = todayEnd;
 
-//     const whereToday: Prisma.IncomingRecordWhereInput     = { receivedDate: { gte: todayStart,  lte: todayEnd  } };
-//     const whereLast7: Prisma.IncomingRecordWhereInput     = { receivedDate: { gte: last7Start,  lte: last7End  } };
-//     const whereMonth: Prisma.IncomingRecordWhereInput     = { receivedDate: { gte: monthStart,  lte: monthEnd  } };
-//     const whereAll:   Prisma.IncomingRecordWhereInput     = (() => {
+//     const whereToday: Prisma.IncomingRecordWhereInput = { receivedDate: { gte: todayStart, lte: todayEnd } };
+//     const whereLast7: Prisma.IncomingRecordWhereInput = { receivedDate: { gte: last7Start, lte: last7End } };
+//     const whereMonth: Prisma.IncomingRecordWhereInput = { receivedDate: { gte: monthStart, lte: monthEnd } };
+//     const whereAll:   Prisma.IncomingRecordWhereInput = (() => {
 //       if (!range?.from && !range?.to) return {};
 //       const rf: Prisma.DateTimeFilter = {};
 //       if (range?.from) { const d = new Date(range.from); if (!isNaN(d.getTime())) rf.gte = d; }
@@ -1471,32 +1380,21 @@ export class IncomingService {
 //       return Object.keys(rf).length ? { receivedDate: rf } : {};
 //     })();
 
-//     // ⚠️ استرجاع القسم عند غيابه من التوكن
 //     let effectiveDeptId = user?.departmentId ?? null;
 //     if (!effectiveDeptId && user?.id) {
-//       const u = await this.prisma.user.findUnique({
-//         where: { id: Number(user.id) },
-//         select: { departmentId: true },
-//       });
+//       const u = await this.prisma.user.findUnique({ where: { id: Number(user.id) }, select: { departmentId: true } });
 //       effectiveDeptId = u?.departmentId ?? null;
 //     }
 
-//     // ✅ ابنِ شروط OR بشرطية
 //     const myDeskOr: Prisma.IncomingDistributionWhereInput[] = [];
-//     if (user?.id)         myDeskOr.push({ assignedToUserId: Number(user.id) });
-//     if (effectiveDeptId)  myDeskOr.push({ targetDepartmentId: Number(effectiveDeptId) });
+//     if (user?.id)        myDeskOr.push({ assignedToUserId: Number(user.id) });
+//     if (effectiveDeptId) myDeskOr.push({ targetDepartmentId: Number(effectiveDeptId) });
 
-//     const myDeskBase: Prisma.IncomingDistributionWhereInput =
-//       myDeskOr.length ? { OR: myDeskOr } : {};
+//     const myDeskBase: Prisma.IncomingDistributionWhereInput = myDeskOr.length ? { OR: myDeskOr } : {};
 
 //     const [
-//       incomingToday,
-//       incomingLast7,
-//       incomingThisMonth,
-//       totalIncoming,
-//       myDeskOpen,
-//       myDeskInProgress,
-//       myDeskClosed,
+//       incomingToday, incomingLast7, incomingThisMonth, totalIncoming,
+//       myDeskOpen, myDeskInProgress, myDeskClosed,
 //     ] = await this.prisma.$transaction([
 //       this.prisma.incomingRecord.count({ where: whereToday }),
 //       this.prisma.incomingRecord.count({ where: whereLast7 }),
@@ -1509,18 +1407,9 @@ export class IncomingService {
 
 //     return {
 //       totals: {
-//         incoming: {
-//           today: incomingToday,
-//           last7Days: incomingLast7,
-//           thisMonth: incomingThisMonth,
-//           all: totalIncoming,
-//         },
+//         incoming: { today: incomingToday, last7Days: incomingLast7, thisMonth: incomingThisMonth, all: totalIncoming },
 //       },
-//       myDesk: {
-//         open: myDeskOpen,
-//         inProgress: myDeskInProgress,
-//         closed: myDeskClosed,
-//       },
+//       myDesk: { open: myDeskOpen, inProgress: myDeskInProgress, closed: myDeskClosed },
 //       generatedAt: now,
 //     };
 //   }
@@ -1551,13 +1440,8 @@ export class IncomingService {
 //               where: { isLatestVersion: true },
 //               orderBy: { uploadedAt: 'desc' },
 //               select: {
-//                 id: true,
-//                 fileNameOriginal: true,
-//                 storagePath: true,
-//                 fileExtension: true,
-//                 fileSizeBytes: true,
-//                 uploadedAt: true,
-//                 versionNumber: true,
+//                 id: true, fileNameOriginal: true, storagePath: true, fileExtension: true,
+//                 fileSizeBytes: true, uploadedAt: true, versionNumber: true,
 //               },
 //             },
 //           },
@@ -1565,11 +1449,10 @@ export class IncomingService {
 //         distributions: {
 //           orderBy: { lastUpdateAt: 'desc' },
 //           select: {
-//             id: true,
-//             status: true,
-//             lastUpdateAt: true,
-//             notes: true,
-//             assignedToUser: { select: { id: true, fullName: true} },
+//             id: true, status: true, lastUpdateAt: true, notes: true,
+//             // SLA
+//             dueAt: true, priority: true, escalationCount: true,
+//             assignedToUser: { select: { id: true, fullName: true } },
 //             targetDepartment: { select: { id: true, name: true } },
 //           },
 //         },
@@ -1610,6 +1493,10 @@ export class IncomingService {
 //         assignedToUserName: d.assignedToUser?.fullName ?? null,
 //         lastUpdateAt: d.lastUpdateAt,
 //         notes: d.notes ?? null,
+//         // SLA
+//         dueAt: d.dueAt ?? null,
+//         priority: d.priority ?? 0,
+//         escalationCount: d.escalationCount ?? 0,
 //       })),
 //     };
 //   }
@@ -1618,35 +1505,24 @@ export class IncomingService {
 //     const incomingId = BigInt(id as any);
 //     const incoming = await this.prisma.incomingRecord.findUnique({
 //       where: { id: incomingId },
-//       select: {
-//         id: true,
-//         documentId: true,
-//       },
+//       select: { id: true, documentId: true, incomingNumber: true, receivedAt: true, receivedDate: true },
 //     });
 //     if (!incoming) throw new NotFoundException('Incoming not found');
 
 //     const [files, dlogs, audit] = await this.prisma.$transaction([
 //       this.prisma.documentFile.findMany({
 //         where: { documentId: incoming.documentId },
-//         orderBy: { uploadedAt: 'desc' },
+//         orderBy: { uploadedAt: 'asc' },
 //         select: {
-//           id: true,
-//           fileNameOriginal: true,
-//           storagePath: true,
-//           uploadedAt: true,
-//           versionNumber: true,
-//           uploadedByUser: { select: { id: true, fullName: true } },
+//           id: true, fileNameOriginal: true, storagePath: true, uploadedAt: true,
+//           versionNumber: true, uploadedByUser: { select: { id: true, fullName: true } },
 //         },
 //       }),
 //       this.prisma.incomingDistributionLog.findMany({
 //         where: { distribution: { incomingId } },
-//         orderBy: { createdAt: 'desc' },
+//         orderBy: { createdAt: 'asc' },
 //         select: {
-//           id: true,
-//           createdAt: true,
-//           oldStatus: true,
-//           newStatus: true,
-//           note: true,
+//           id: true, createdAt: true, oldStatus: true, newStatus: true, note: true,
 //           updatedByUser: { select: { id: true, fullName: true } },
 //           distribution: {
 //             select: {
@@ -1659,64 +1535,65 @@ export class IncomingService {
 //       }),
 //       this.prisma.auditTrail.findMany({
 //         where: { documentId: incoming.documentId },
-//         orderBy: { actionAt: 'desc' },
+//         orderBy: { actionAt: 'asc' },
 //         select: {
-//           id: true,
-//           actionType: true,
-//           actionDescription: true,
-//           actionAt: true,
+//           id: true, actionType: true, actionDescription: true, actionAt: true,
 //           User: { select: { id: true, fullName: true } },
 //         },
 //       }),
 //     ]);
 
-//     const events: Array<any> = [];
+//     type Raw = { at: Date; actionType?: string; by?: string | null; details?: string | null; link?: string | null; };
+//     const rawTimeline: Raw[] = [];
 
-//     files.forEach((f) =>
-//       events.push({
-//         type: 'file',
+//     rawTimeline.push({
+//       at: incoming.receivedAt ?? incoming.receivedDate ?? new Date(),
+//       actionType: 'CREATE_INCOMING',
+//       by: 'النظام',
+//       details: incoming.incomingNumber ? `إنشاء وارد ${incoming.incomingNumber}` : null,
+//     });
+
+//     for (const f of files) {
+//       rawTimeline.push({
 //         at: f.uploadedAt,
-//         title: 'تم رفع ملف',
+//         actionType: 'FILE_UPLOADED',
 //         by: f.uploadedByUser?.fullName ?? '—',
 //         details: `${f.fileNameOriginal} (v${f.versionNumber})`,
 //         link: `/files/${f.storagePath.replace(/\\/g, '/')}`,
-//       }),
-//     );
+//       });
+//     }
 
-//     dlogs.forEach((l) =>
-//       events.push({
-//         type: 'distribution',
+//     for (const l of dlogs) {
+//       const changed = l.oldStatus !== l.newStatus;
+//       rawTimeline.push({
 //         at: l.createdAt,
-//         title: 'تحديث توزيع',
+//         actionType: changed ? 'DIST_STATUS' : 'UPDATE_DISTRIBUTION',
 //         by: l.updatedByUser?.fullName ?? '—',
 //         details: [
-//           l.oldStatus ? `من ${l.oldStatus}` : null,
-//           l.newStatus ? `إلى ${l.newStatus}` : null,
-//           l.distribution?.targetDepartment?.name
-//             ? `قسم: ${l.distribution?.targetDepartment?.name}`
-//             : null,
-//           l.distribution?.assignedToUser?.fullName
-//             ? `مكلف: ${l.distribution?.assignedToUser?.fullName}`
-//             : null,
+//           changed && l.oldStatus ? `من ${l.oldStatus}` : null,
+//           changed && l.newStatus ? `إلى ${l.newStatus}` : null,
+//           l.distribution?.targetDepartment?.name ? `قسم: ${l.distribution?.targetDepartment?.name}` : null,
+//           l.distribution?.assignedToUser?.fullName ? `مكلّف: ${l.distribution?.assignedToUser?.fullName}` : null,
 //           l.note ? `ملاحظة: ${l.note}` : null,
-//         ]
-//           .filter(Boolean)
-//           .join(' — '),
-//       }),
-//     );
+//         ].filter(Boolean).join(' — ') || null,
+//       });
+//     }
 
-//     audit.forEach((a) =>
-//       events.push({
-//         type: 'audit',
+//     for (const a of audit) {
+//       rawTimeline.push({
 //         at: a.actionAt,
-//         title: a.actionType,
+//         actionType: a.actionType || 'COMMENT',
 //         by: a.User?.fullName ?? '—',
-//         details: a.actionDescription ?? '',
-//       }),
-//     );
+//         details: a.actionDescription ?? null,
+//       });
+//     }
 
-//     events.sort((a, b) => (new Date(b.at).getTime() - new Date(a.at).getTime()));
-//     return { items: events };
+//     const timeline = rawTimeline
+//       .sort((a, b) => a.at.getTime() - b.at.getTime())
+//       .map((it) => ({ ...it, actionLabel: tAction(it.actionType) }))
+//       .reverse();
+
+//     return { items: timeline };
 //   }
 
 //   // =========================
@@ -1728,32 +1605,35 @@ export class IncomingService {
 //       documentTitle: string;
 //       owningDepartmentId: number;
 //       externalPartyName: string;
-//       deliveryMethod: string;
+//       deliveryMethod: string; // 'Hand' | 'Mail' | ...
+//       dueAt?: string | null;
+//       priority?: number | null;
 //     },
 //     user: any,
+//     meta?: AuditMeta,
 //   ) {
 //     const title = String(payload.documentTitle || '').trim();
 //     if (!title) throw new BadRequestException('Invalid title');
 
-//     if (!payload.owningDepartmentId || isNaN(Number(payload.owningDepartmentId))) {
+//     const owningDeptId = Number(payload.owningDepartmentId);
+//     if (!owningDeptId || isNaN(owningDeptId)) {
 //       throw new BadRequestException('Invalid owningDepartmentId');
 //     }
 
 //     const extName = String(payload.externalPartyName || '').trim();
 //     if (!extName) throw new BadRequestException('Invalid externalPartyName');
 
-//     // ✅ استخراج userId بطريقة موحدة وآمنة
 //     const { userId } = extractUserContext(user);
 //     if (!userId) throw new BadRequestException('Invalid user context');
 
 //     const year = new Date().getFullYear();
 
 //     return this.prisma.$transaction(async (tx) => {
+//       // 1) طرف خارجي
 //       let external = await tx.externalParty.findFirst({
 //         where: { name: { equals: extName, mode: 'insensitive' } as any },
 //         select: { id: true },
 //       });
-
 //       if (!external) {
 //         external = await tx.externalParty.create({
 //           data: { name: extName, status: 'Active' },
@@ -1761,26 +1641,37 @@ export class IncomingService {
 //         });
 //       }
 
+//       // 2) النوع/السرية
+//       const [docType, secLevel] = await Promise.all([
+//         tx.documentType.findFirst({ where: { isIncomingType: true }, select: { id: true } }),
+//         tx.securityLevel.findFirst({ where: { rankOrder: 0 }, select: { id: true } }), // Public
+//       ]);
+//       if (!docType) throw new BadRequestException('DocumentType for Incoming not found');
+//       if (!secLevel) throw new BadRequestException('Default SecurityLevel not found');
+
+//       // 3) الوثيقة
 //       const document = await tx.document.create({
 //         data: {
 //           title,
 //           currentStatus: 'Registered',
-//           documentType: { connect: { id: 1 } },
-//           securityLevel: { connect: { id: 1 } },
-//           createdByUser: { connect: { id: userId } },
-//           owningDepartment: { connect: { id: Number(payload.owningDepartmentId) } },
+//           documentTypeId: docType.id,
+//           securityLevelId: secLevel.id,
+//           createdByUserId: userId,
+//           owningDepartmentId: owningDeptId,
 //         },
-//         select: { id: true, title: true },
+//         select: { id: true, title: true, createdAt: true },
 //       });
 
+//       // 4) رقم الوارد
 //       const incomingNumber = await this.generateIncomingNumber(tx, year);
 
+//       // 5) سجل الوارد
 //       const incoming = await tx.incomingRecord.create({
 //         data: {
 //           documentId: document.id,
 //           externalPartyId: external.id,
 //           receivedDate: new Date(),
-//           receivedByUserId: userId,            // ✅ بدون null
+//           receivedByUserId: userId,
 //           incomingNumber,
 //           deliveryMethod: payload.deliveryMethod as any,
 //           urgencyLevel: 'Normal',
@@ -1789,28 +1680,35 @@ export class IncomingService {
 //           id: true,
 //           incomingNumber: true,
 //           receivedDate: true,
-//           document: { select: { id: true, title: true } },        // ✅ إرجاع العلاقات
-//           externalParty: { select: { name: true } },              // ✅ إرجاع العلاقات
+//           document: { select: { id: true, title: true } },
+//           externalParty: { select: { name: true } },
 //         },
 //       });
 
-//       // توزيع تلقائي على القسم المالِك
+//       const dueAtDate = payload.dueAt ? new Date(payload.dueAt) : null;
+//       const priority  = typeof payload.priority === 'number' ? payload.priority : 0;
+
+//       // 6) توزيع تلقائي على القسم المالِك (يحمل SLA إن أُرسل)
 //       await tx.incomingDistribution.create({
 //         data: {
 //           incomingId: incoming.id,
-//           targetDepartmentId: Number(payload.owningDepartmentId),
+//           targetDepartmentId: owningDeptId,
 //           status: 'Open',
 //           notes: null,
+//           dueAt: dueAtDate,
+//           priority,
 //         },
 //       });
 
-//       // سجل تدقيقي
+//       // 7) تدقيق
 //       await tx.auditTrail.create({
 //         data: {
 //           documentId: document.id,
 //           userId: userId,
 //           actionType: 'CREATE_INCOMING',
 //           actionDescription: `إنشاء وارد ${incoming.incomingNumber}`,
+//           fromIP: meta?.ip ?? undefined,
+//           workstationName: meta?.workstation ?? undefined,
 //         },
 //       });
 
@@ -1824,9 +1722,7 @@ export class IncomingService {
 //     });
 //   }
 
-//   /**
-//    * إحالة: إنشاء توزيع جديد وقد نغلق السابق افتراضيًا
-//    */
+//   /** إحالة: إنشاء توزيع جديد (مع SLA اختياري) وقد نغلق السابق افتراضيًا */
 //   async forwardIncoming(
 //     incomingIdStr: string,
 //     payload: {
@@ -1834,8 +1730,11 @@ export class IncomingService {
 //       assignedToUserId?: number;
 //       note?: string | null;
 //       closePrevious?: boolean;
+//       dueAt?: string | null;
+//       priority?: number | null;
 //     },
 //     user: any,
+//     meta?: AuditMeta,
 //   ) {
 //     const incomingId = BigInt(incomingIdStr as any);
 //     const { userId } = extractUserContext(user);
@@ -1870,17 +1769,19 @@ export class IncomingService {
 //         }
 //       }
 
+//       const dueAtDate = payload.dueAt ? new Date(payload.dueAt) : null;
+//       const priority  = typeof payload.priority === 'number' ? payload.priority : 0;
+
 //       const newDist = await tx.incomingDistribution.create({
 //         data: {
 //           incomingId,
 //           targetDepartmentId: payload.targetDepartmentId,
-//           assignedToUserId:
-//             payload.assignedToUserId !== undefined
-//               ? payload.assignedToUserId
-//               : null,
+//           assignedToUserId: payload.assignedToUserId ?? null,
 //           status: 'Open',
 //           notes: payload.note ?? null,
 //           lastUpdateAt: new Date(),
+//           dueAt: dueAtDate,
+//           priority,
 //         },
 //         select: { id: true },
 //       });
@@ -1890,10 +1791,7 @@ export class IncomingService {
 //           distributionId: newDist.id,
 //           oldStatus: null,
 //           newStatus: 'Open',
-//           note:
-//             payload.note ??
-//             `إحالة إلى قسم ${payload.targetDepartmentId}` +
-//               (payload.assignedToUserId ? ` ومكلّف ${payload.assignedToUserId}` : ''),
+//           note: payload.note ?? `إحالة إلى قسم ${payload.targetDepartmentId}` + (payload.assignedToUserId ? ` ومكلّف ${payload.assignedToUserId}` : ''),
 //           updatedByUserId: userId || 1,
 //         },
 //       });
@@ -1904,6 +1802,8 @@ export class IncomingService {
 //           userId: userId || 1,
 //           actionType: 'FORWARD',
 //           actionDescription: `إحالة الوارد إلى قسم ${payload.targetDepartmentId}`,
+//           fromIP: meta?.ip ?? undefined,
+//           workstationName: meta?.workstation ?? undefined,
 //         },
 //       });
 
@@ -1916,12 +1816,11 @@ export class IncomingService {
 //     status: string,
 //     note: string | null,
 //     user: any,
+//     meta?: AuditMeta,
 //   ) {
 //     const distId = BigInt(distIdStr as any);
 //     const allowed = ['Open', 'InProgress', 'Closed', 'Escalated'];
-//     if (!allowed.includes(status)) {
-//       throw new BadRequestException('Invalid status');
-//     }
+//     if (!allowed.includes(status)) throw new BadRequestException('Invalid status');
 //     const { userId } = extractUserContext(user);
 
 //     return this.prisma.$transaction(async (tx) => {
@@ -1952,6 +1851,61 @@ export class IncomingService {
 //           userId: userId || 1,
 //           actionType: 'DIST_STATUS',
 //           actionDescription: `تغيير حالة التوزيع إلى ${status}${note ? ` — ${note}` : ''}`,
+//           fromIP: meta?.ip ?? undefined,
+//           workstationName: meta?.workstation ?? undefined,
+//         },
+//       });
+
+//       return { ok: true };
+//     });
+//   }
+
+//   async updateDistributionSLA(
+//     distIdStr: string,
+//     payload: { dueAt?: string | null; priority?: number | null },
+//     user: any,
+//     meta?: AuditMeta,
+//   ) {
+//     const distId = BigInt(distIdStr as any);
+//     const { userId } = extractUserContext(user);
+
+//     const dueAtDate = payload.dueAt ? new Date(payload.dueAt) : null;
+//     const priority  = typeof payload.priority === 'number' ? payload.priority : undefined;
+
+//     return this.prisma.$transaction(async (tx) => {
+//       const dist = await tx.incomingDistribution.findUnique({
+//         where: { id: distId },
+//         select: { id: true, incoming: { select: { documentId: true } } },
+//       });
+//       if (!dist) throw new NotFoundException('Distribution not found');
+
+//       await tx.incomingDistribution.update({
+//         where: { id: distId },
+//         data: {
+//           ...(payload.dueAt !== undefined ? { dueAt: dueAtDate } : {}),
+//           ...(priority !== undefined ? { priority } : {}),
+//           lastUpdateAt: new Date(),
+//         },
+//       });
+
+//       await tx.incomingDistributionLog.create({
+//         data: {
+//           distributionId: distId,
+//           oldStatus: null,
+//           newStatus: null,
+//           note: `تحديث SLA: dueAt=${dueAtDate ?? '—'}, priority=${priority ?? '—'}`,
+//           updatedByUserId: userId || 1,
+//         },
+//       });
+
+//       await tx.auditTrail.create({
+//         data: {
+//           documentId: dist.incoming.documentId,
+//           userId: userId || 1,
+//           actionType: 'UPDATE_DISTRIBUTION',
+//           actionDescription: `تحديث SLA للتوزيع`,
+//           fromIP: meta?.ip ?? undefined,
+//           workstationName: meta?.workstation ?? undefined,
 //         },
 //       });
 
@@ -1964,6 +1918,7 @@ export class IncomingService {
 //     assignedToUserId: number,
 //     note: string | null,
 //     user: any,
+//     meta?: AuditMeta,
 //   ) {
 //     const distId = BigInt(distIdStr as any);
 //     const { userId } = extractUserContext(user);
@@ -1996,14 +1951,21 @@ export class IncomingService {
 //           userId: userId || 1,
 //           actionType: 'ASSIGN',
 //           actionDescription: `تعيين مكلّف ${assignedToUserId}${note ? ` — ${note}` : ''}`,
+//           fromIP: meta?.ip ?? undefined,
+//           workstationName: meta?.workstation ?? undefined,
 //         },
+//       });
+
+//       await tx.incomingDistribution.update({
+//         where: { id: distId },
+//         data: { lastUpdateAt: new Date() },
 //       });
 
 //       return { ok: true };
 //     });
 //   }
 
-//   async addDistributionNote(distIdStr: string, note: string, user: any) {
+//   async addDistributionNote(distIdStr: string, note: string, user: any, meta?: AuditMeta) {
 //     const distId = BigInt(distIdStr as any);
 //     const { userId } = extractUserContext(user);
 
@@ -2030,6 +1992,8 @@ export class IncomingService {
 //           userId: userId || 1,
 //           actionType: 'NOTE',
 //           actionDescription: note,
+//           fromIP: meta?.ip ?? undefined,
+//           workstationName: meta?.workstation ?? undefined,
 //         },
 //       });
 
@@ -2063,7 +2027,7 @@ export class IncomingService {
 //     return { days: n, series: out };
 //   }
 
-//   // *** My-desk status distribution (يعتمد على user) ***
+//   // *** My-desk status distribution ***
 //   async myDeskStatus(reqUser: any) {
 //     const base: Prisma.IncomingDistributionWhereInput = {
 //       OR: [
@@ -2078,8 +2042,8 @@ export class IncomingService {
 //     ]);
 //     return { open, inProgress: prog, closed };
 //   }
-
 // }
+
 
 
 

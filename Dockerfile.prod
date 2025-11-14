@@ -23,13 +23,14 @@ COPY --from=deps /app/node_modules ./node_modules
 # باقي السورس المطلوب للبناء
 COPY . .
 
-# توليد Prisma
-RUN npx prisma generate
+# مهم: نسخ prisma موجود بالفعل بفعل السطر السابق
+# توليد Prisma Client داخل بيئة Alpine (linux-musl)
+RUN pnpm prisma generate
 
 # نبني Nest (يفترض script: "build": "nest build")
 RUN pnpm build
 
-# ✅ اطبع شجرة dist للمساعدة، وتحقق من وجود واحد من المسارات المعروفة
+# للتشخيص
 RUN echo "📁 dist layout:" && ls -la dist && ( \
       [ -f dist/main.js ] || \
       [ -f dist/src/main.js ] || \
@@ -42,6 +43,9 @@ WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=3000
+
+# ضروري لـ Prisma engines على Alpine
+RUN apk add --no-cache openssl curl
 
 # ملفات التشغيل فقط
 COPY --from=build /app/node_modules ./node_modules

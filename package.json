@@ -19,7 +19,7 @@
     "prisma:seed": "ts-node --transpile-only prisma/seed.ts"
   },
   "prisma": {
-    "seed": "ts-node --transpile-only prisma/seed.ts"
+    "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
@@ -28,8 +28,11 @@
     "@nestjs/jwt": "^11.0.1",
     "@nestjs/passport": "^11.0.5",
     "@nestjs/platform-express": "^11.0.1",
+    "@nestjs/platform-socket.io": "^11.1.8",
+    "@nestjs/schedule": "^6.0.1",
     "@nestjs/serve-static": "^5.0.4",
     "@nestjs/throttler": "^6.4.0",
+    "@nestjs/websockets": "^11.1.8",
     "@prisma/client": "^6.18.0",
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
@@ -39,10 +42,13 @@
     "helmet": "^8.1.0",
     "ioredis": "^5.8.2",
     "multer": "^2.0.2",
+    "node-cron": "^4.2.1",
     "passport": "^0.7.0",
     "passport-jwt": "^4.0.1",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "socket.io": "^4.8.1",
+    "socket.io-client": "^4.8.1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
@@ -93,8 +99,5 @@
     ],
     "coverageDirectory": "../coverage",
     "testEnvironment": "node"
-  },
-  "prisma": {
-    "seed": "tsx prisma/seed.ts"
   }
 }

@@ -165,9 +165,21 @@ async function bootstrap() {
   logger.log(`📂 Serving uploads from ${UPLOAD_ROOT} at /files/`);
 }
 
-console.log('DATABASE_URL =>', process.env.DATABASE_URL);
-bootstrap();
+// console.log('DATABASE_URL =>', process.env.DATABASE_URL);
+// bootstrap();
 
+console.log('DATABASE_URL =>', process.env.DATABASE_URL);
+
+(async () => {
+  try {
+    await bootstrap();
+  } catch (e: any) {
+    // اطبع السبب الحقيقي قبل الخروج
+    console.error('FATAL BOOT ERROR:', e?.stack || e);
+    // خليه عايش 120 ثانية عشان نقرأ اللوج قبل ما يخرج
+    setTimeout(() => process.exit(1), 120000);
+  }
+})();
 
 
 

@@ -59,6 +59,17 @@ enum UrgencyLevel {
   Urgent
 }
 
+enum NotificationSeverity {
+  info
+  warning
+  danger
+}
+
+enum NotificationStatus {
+  Unread
+  Read
+}
+
 // ============ Models ============
 
 model Department {
@@ -79,6 +90,8 @@ model Department {
   owningDocuments       Document[]             @relation("OwningDepartment")
   incomingDistributions IncomingDistribution[] @relation("IncomingTargetDept")
   users                 User[]
+
+  @@map("Department")
 
   @@index([status])
   @@index([parentDepartmentId])
@@ -106,6 +119,9 @@ model User {
   /// جديد: لو true يُجبر على تغيير كلمة المرور عند أول دخول
   mustChangePassword Boolean @default(false)
 
+  failedLoginAttempts Int       @default(0)
+  lockoutUntil        DateTime?
+
   AuditTrail                    AuditTrail[]
   documentsCreated              Document[]                @relation("UserCreatedDocuments")
   uploadedFiles                 DocumentFile[]            @relation("UserUploadedFiles")
@@ -121,6 +137,10 @@ model User {
   workflowAssignedInstances WorkflowInstance[] @relation("WorkflowInstanceCurrentAssignee")
 
   passwordResets PasswordReset[]
+  notifications  Notification[]
+
+  @@map("User")
+
 
   @@index([departmentId])
   @@index([securityClearanceRank])
@@ -135,6 +155,9 @@ model DocumentType {
   isInternalMemo Boolean    @default(false)
   description    String?
   documents      Document[]
+
+  @@map("DocumentType")
+
 
   @@unique([typeName])
   @@index([isIncomingType])
@@ -174,6 +197,9 @@ model Document {
   WorkflowInstance WorkflowInstance[]
   OCRText          OCRText[] // [NEW] نصوص OCR
 
+  @@map("Document")
+
+
   @@index([currentStatus])
   @@index([owningDepartmentId])
   @@index([createdAt])
@@ -198,6 +224,9 @@ model DocumentFile {
   document       Document @relation(fields: [documentId], references: [id], onDelete: Restrict)
   uploadedByUser User     @relation("UserUploadedFiles", fields: [uploadedByUserId], references: [id], onDelete: Restrict)
 
+  @@map("DocumentFile")
+
+
   @@unique([documentId, versionNumber])
   @@index([documentId, isLatestVersion, versionNumber])
   @@index([checksumHash])
@@ -218,6 +247,9 @@ model ExternalParty {
 
   incomingRecords IncomingRecord[]
   OutgoingRecord  OutgoingRecord[]
+
+  @@map("ExternalParty")
+
 
   @@index([status])
   @@index([name])
@@ -243,6 +275,9 @@ model IncomingRecord {
   externalParty  ExternalParty          @relation(fields: [externalPartyId], references: [id], onDelete: Restrict)
   receivedByUser User                   @relation("UserReceivedIncoming", fields: [receivedByUserId], references: [id], onDelete: Restrict)
 
+  @@map("IncomingRecord")
+
+
   @@index([receivedDate])
   @@index([externalPartyId])
 }
@@ -258,16 +293,26 @@ model IncomingDistribution {
   createdAt          DateTime           @default(now())
   updatedAt          DateTime           @updatedAt
 
+  // ✅ SLA
+  dueAt           DateTime?
+  priority        Int       @default(0) // 0=Normal, 1=High, 2=Critical
+  escalationCount Int       @default(0)
+
   assignedToUser   User?          @relation("AssignedIncomingDistributions", fields: [assignedToUserId], references: [id], onDelete: SetNull)
   incoming         IncomingRecord @relation(fields: [incomingId], references: [id], onDelete: Restrict)
   targetDepartment Department     @relation("IncomingTargetDept", fields: [targetDepartmentId], references: [id], onDelete: Restrict)
 
   logs IncomingDistributionLog[]
 
+  @@map("IncomingDistribution")
+
   @@index([targetDepartmentId])
   @@index([status])
   @@index([targetDepartmentId, status, lastUpdateAt])
   @@index([createdAt])
+  // ✅ فهارس مساعدة لـ SLA
+  @@index([dueAt])
+  @@index([status, dueAt])
 }
 
 model AuditTrail {
@@ -288,6 +333,9 @@ model AuditTrail {
   Document Document? @relation(fields: [documentId], references: [id], onDelete: SetNull)
   User     User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
 
+  @@map("AuditTrail")
+
+
   @@index([documentId])
   @@index([userId])
   @@index([actionAt])
@@ -303,6 +351,8 @@ model DocumentMetadata {
 
   Document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
+  @@map("DocumentMetadata")
+
   @@index([metaKey])
   @@index([metaValue])
   @@index([documentId, metaKey])
@@ -312,6 +362,9 @@ model DocumentTag {
   id              Int               @id @default(autoincrement())
   tagName         String            @unique
   DocumentTagLink DocumentTagLink[]
+
+  @@map("DocumentTag")
+
 }
 
 model DocumentTagLink {
@@ -321,6 +374,8 @@ model DocumentTagLink {
 
   Document    Document    @relation(fields: [documentId], references: [id], onDelete: Cascade)
   DocumentTag DocumentTag @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@map("DocumentTagLink")
 
   @@unique([documentId, tagId])
   @@index([tagId])
@@ -343,6 +398,8 @@ model OutgoingRecord {
   ExternalParty ExternalParty @relation(fields: [externalPartyId], references: [id], onDelete: Restrict)
   User          User          @relation(fields: [signedByUserId], references: [id], onDelete: Restrict)
 
+  @@map("OutgoingRecord")
+
   @@index([issueDate])
   @@index([externalPartyId])
 }
@@ -356,6 +413,9 @@ model Role {
   RolePermission RolePermission[]
 
   isSystem Boolean @default(false)
+
+  @@map("Role")
+
 }
 
 model UserRole {
@@ -366,6 +426,9 @@ model UserRole {
 
   Role Role @relation(fields: [roleId], references: [id], onDelete: Restrict)
   User User @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@map("UserRole")
+
 
   @@unique([userId, roleId])
   @@index([userId])
@@ -387,6 +450,9 @@ model WorkflowInstance {
   Document           Document             @relation(fields: [documentId], references: [id], onDelete: Cascade)
   WorkflowStepAction WorkflowStepAction[]
 
+  @@map("WorkflowInstance")
+
+
   @@index([status])
   @@index([currentAssigneeUserId])
   @@index([documentId])
@@ -404,6 +470,9 @@ model WorkflowStepAction {
 
   User             User             @relation(fields: [actionByUserId], references: [id], onDelete: Restrict)
   WorkflowInstance WorkflowInstance @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+
+  @@map("WorkflowStepAction")
+
 
   @@index([workflowId])
   @@index([actionByUserId])
@@ -426,6 +495,9 @@ model IncomingDistributionLog {
 
   createdAt DateTime @default(now())
 
+  @@map("IncomingDistributionLog")
+
+
   @@index([distributionId])
   @@index([createdAt])
   @@index([updatedByUserId])
@@ -435,6 +507,9 @@ model NumberSequence {
   id         Int    @id @default(autoincrement())
   scope      String @unique
   lastNumber Int    @default(0)
+
+  @@map("NumberSequence")
+
 
   @@index([scope])
 }
@@ -451,6 +526,9 @@ model OCRText {
 
   Document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
+  @@map("OCRText")
+
+
   @@index([documentId])
 }
 
@@ -462,6 +540,9 @@ model Permission {
   code           String           @unique
   description    String?
   RolePermission RolePermission[]
+
+  @@map("Permission")
+
 }
 
 model RolePermission {
@@ -471,6 +552,9 @@ model RolePermission {
 
   Role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
   Permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@map("RolePermission")
+
 
   @@unique([roleId, permissionId])
   @@index([roleId])
@@ -484,6 +568,9 @@ model SecurityLevel {
   rankOrder   Int     @unique
 
   documents Document[]
+
+  @@map("SecurityLevel")
+
 
   @@index([levelName])
 }
@@ -499,6 +586,95 @@ model PasswordReset {
 
   User User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@map("PasswordReset")
+
+
   @@index([userId])
   @@index([expiresAt])
+}
+
+model TimelineEvent {
+  id          BigInt   @id @default(autoincrement())
+  docId       BigInt
+  docType     String // 'INCOMING' | 'OUTGOING'
+  actorUserId Int?
+  eventType   String // 'FORWARDED'|'ASSIGNED'|'STATUS_CHANGED'|'FILE_UPLOADED'|'FILE_DELETED'|'SLA_REMINDER'|'SLA_ESCALATION' ...
+  details     Json?
+  createdAt   DateTime @default(now())
+
+  @@map("TimelineEvent")
+
+  @@index([docType, docId, createdAt])
+  @@index([createdAt])
+}
+
+/// سياسة مستويات التصعيد
+model EscalationPolicy {
+  id        Int               @id @default(autoincrement())
+  name      String            @unique
+  isActive  Boolean           @default(true)
+  levels    EscalationLevel[]
+  createdAt DateTime          @default(now())
+  updatedAt DateTime          @updatedAt
+
+  @@map("EscalationPolicy")
+
+}
+
+/// مستوى تصعيد واحد ضمن سياسة
+model EscalationLevel {
+  id       Int              @id @default(autoincrement())
+  policyId Int
+  policy   EscalationPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  /// رقم المستوى (L1..L4). فريد داخل نفس السياسة
+  level            Int
+  /// عدد الدقائق بعد الـ dueAt للوصول لهذا المستوى (0 = عند الاختراق)
+  thresholdMinutes Int
+
+  /// رفع الأولوية تلقائيًا عند الوصول لهذا المستوى (مرة واحدة)
+  priorityBump Int @default(1)
+
+  /// الحالة التي تُفرض عند الوصول لهذا المستوى (غالبًا Escalated)
+  statusOnReach DistributionStatus? @default(Escalated)
+
+  /// من L2 فأعلى نُلزم سبب التأخير من الواجهة
+  requireDelayReason Boolean @default(false)
+
+  /// من L3 فأعلى يمكن تفعيل إعادة الإسناد التلقائي
+  autoReassign Boolean @default(false)
+
+  /// من يتلقى تنبيهات عند هذا المستوى
+  notifyAssignee Boolean @default(true)
+  notifyManager  Boolean @default(true)
+  notifyAdmin    Boolean @default(false)
+
+  /// فترة كبح إعادة إرسال التنبيه لنفس المستوى (بالدقائق)
+  throttleMinutes Int @default(60)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("EscalationLevel")
+  
+
+  @@unique([policyId, level])
+}
+
+model Notification {
+  id        Int                  @id @default(autoincrement())
+  userId    Int
+  title     String
+  body      String
+  link      String? // رابط يفتح المعاملة/الوارد
+  severity  NotificationSeverity @default(info)
+  status    NotificationStatus   @default(Unread)
+  createdAt DateTime             @default(now())
+
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("Notification") // <-- مهم! يطابق الجدول الموجود بحرف كبير
+
+
+  @@index([userId, status, createdAt])
 }

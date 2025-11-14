@@ -1,3 +1,5 @@
+// src/incoming/incoming.controller.ts
+
 import {
   Body,
   Controller,
@@ -11,10 +13,9 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
-import { RequirePermissions  } from 'src/auth/permissions.decorator';
+import { RequirePermissions } from 'src/auth/permissions.decorator';
 import { PERMISSIONS } from 'src/auth/permissions.constants';
 import { IncomingService } from './incoming.service';
-import { AuditService } from 'src/audit/audit.service';
 import { extractClientMeta } from 'src/audit/audit.utils';
 
 @UseGuards(JwtAuthGuard)
@@ -44,6 +45,7 @@ export class IncomingController {
     @Query('assigneeId') assigneeId?: string,
     @Query('incomingNumber') incomingNumber?: string,
     @Query('distributionId') distributionId?: string,
+    @Query('scope') scope?: 'overdue' | 'today' | 'week',
   ) {
     return this.incomingService.myDesk(req.user, {
       page: Number(page) || 1,
@@ -55,7 +57,23 @@ export class IncomingController {
       assigneeId,
       incomingNumber,
       distributionId,
+      scope,
     });
+  }
+
+  // ✅ تحديث SLA للتوزيع (احتفظنا بهذه النسخة لأنها توافق توقيع الخدمة)
+  @RequirePermissions(PERMISSIONS.INCOMING_ASSIGN) // أو صلاحية مناسبة لديك
+  @Patch('distributions/:distId/sla')
+  async updateSLA(
+    @Param('distId') distId: string,
+    @Body() body: { dueAt?: string | null; priority?: number | null },
+    @Req() req: any,
+  ) {
+    const meta = {
+      ip: req.clientIp,
+      workstation: req.workstationName,
+    };
+    return this.incomingService.updateDistributionSLA(distId, body, req.user, meta);
   }
 
   @RequirePermissions(PERMISSIONS.INCOMING_READ)
@@ -102,6 +120,9 @@ export class IncomingController {
       owningDepartmentId,
       externalPartyName,
       deliveryMethod,
+      // اختيارياً إن أردت إنشاء الوارد مع SLA أولي للتوزيع الافتراضي:
+      dueAt,
+      priority,
     } = body ?? {};
 
     const meta = extractClientMeta(req); // { ip, workstation }
@@ -125,6 +146,8 @@ export class IncomingController {
         owningDepartmentId: Number(owningDepartmentId),
         externalPartyName: String(externalPartyName).trim(),
         deliveryMethod: String(deliveryMethod),
+        dueAt: typeof dueAt === 'string' ? dueAt : undefined,
+        priority: typeof priority === 'number' ? priority : undefined,
       },
       req.user,
       meta,
@@ -142,6 +165,9 @@ export class IncomingController {
           : undefined,
       note: body?.note ?? null,
       closePrevious: body?.closePrevious !== false,
+      // ✅ دعم SLA الاختياري مع الإحالة
+      dueAt: typeof body?.dueAt === 'string' ? body.dueAt : undefined,
+      priority: typeof body?.priority === 'number' ? body.priority : undefined,
     };
 
     const meta = extractClientMeta(req); // { ip, workstation }
@@ -149,7 +175,7 @@ export class IncomingController {
     if (!payload.targetDepartmentId || isNaN(payload.targetDepartmentId)) {
       throw new BadRequestException('targetDepartmentId is required');
     }
-    return this.incomingService.forwardIncoming(id, payload, req.user,meta);
+    return this.incomingService.forwardIncoming(id, payload, req.user, meta);
   }
 
   @RequirePermissions(PERMISSIONS.INCOMING_UPDATE_STATUS)
@@ -222,7 +248,7 @@ export class IncomingController {
 
 
 
-// // src/incoming/incoming.controller.ts
+
 
 // import {
 //   Body,
@@ -231,22 +257,24 @@ export class IncomingController {
 //   Post,
 //   Patch,
 //   Query,
-//   UseGuards,
 //   Req,
 //   BadRequestException,
 //   Param,
+//   UseGuards,
 // } from '@nestjs/common';
 // import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
-// import { RolesGuard } from 'src/auth/roles.guard';
-// import { Roles } from 'src/auth/roles.decorator';
+// import { RequirePermissions  } from 'src/auth/permissions.decorator';
+// import { PERMISSIONS } from 'src/auth/permissions.constants';
 // import { IncomingService } from './incoming.service';
+// import { AuditService } from 'src/audit/audit.service';
+// import { extractClientMeta } from 'src/audit/audit.utils';
 
-// @UseGuards(JwtAuthGuard, RolesGuard)
+// @UseGuards(JwtAuthGuard)
 // @Controller('incoming')
 // export class IncomingController {
 //   constructor(private readonly incomingService: IncomingService) {}
 
-//   // قراءة عامة للمستخدمين
+//   @RequirePermissions(PERMISSIONS.INCOMING_READ)
 //   @Get('my-latest')
 //   async getLatestIncoming(
 //     @Query('page') page: number,
@@ -255,6 +283,7 @@ export class IncomingController {
 //     return this.incomingService.getLatestIncoming(page, pageSize);
 //   }
 
+//   @RequirePermissions(PERMISSIONS.INCOMING_READ)
 //   @Get('my-desk')
 //   async myDesk(
 //     @Req() req: any,
@@ -267,6 +296,7 @@ export class IncomingController {
 //     @Query('assigneeId') assigneeId?: string,
 //     @Query('incomingNumber') incomingNumber?: string,
 //     @Query('distributionId') distributionId?: string,
+//     @Query('scope') scope?: 'overdue' | 'today' | 'week',
 //   ) {
 //     return this.incomingService.myDesk(req.user, {
 //       page: Number(page) || 1,
@@ -278,9 +308,34 @@ export class IncomingController {
 //       assigneeId,
 //       incomingNumber,
 //       distributionId,
+//       scope,
 //     });
 //   }
 
+//   @RequirePermissions(PERMISSIONS.INCOMING_ASSIGN) // أو صلاحية مناسبة
+//   @Patch('distributions/:distId/sla')
+//   async updateSLA(
+//     @Param('distId') distId: string,
+//     @Body() body: { dueAt?: string | null; priority?: number | null },
+//     @Req() req: any,
+//   ) {
+//     return this.incomingService.updateDistributionSLA(distId, body, req.user, {
+//       ip: req.clientIp,
+//       workstation: req.workstationName,
+//     });
+//   }
+
+//   @Patch('distributions/:id/sla')
+//   @UseGuards(JwtAuthGuard)
+//   @RequirePermissions(PERMISSIONS.INCOMING_UPDATE_SLA)
+//   async updateSLA(
+//     @Param('id') id: string,
+//     @Body() body: { dueAt: string | null; priority: number }
+//   ) {
+//     return this.incomingService.updateDistributionSLA(BigInt(id), body);
+//   }
+
+//   @RequirePermissions(PERMISSIONS.INCOMING_READ)
 //   @Get('search')
 //   async search(
 //     @Query('page') page?: string,
@@ -298,23 +353,25 @@ export class IncomingController {
 //     });
 //   }
 
+//   @RequirePermissions(PERMISSIONS.INCOMING_READ)
 //   @Get('stats/overview')
 //   async statsOverview(@Req() req: any) {
 //     return this.incomingService.statsOverview(req.user);
 //   }
 
+//   @RequirePermissions(PERMISSIONS.INCOMING_READ)
 //   @Get(':id')
 //   async details(@Param('id') id: string) {
 //     return this.incomingService.getIncomingDetails(id);
 //   }
 
+//   @RequirePermissions(PERMISSIONS.INCOMING_READ)
 //   @Get(':id/timeline')
 //   async timeline(@Param('id') id: string) {
 //     return this.incomingService.getTimeline(id);
 //   }
 
-//   // إنشاء وإجراءات حساسة: ADMIN أو MANAGER
-//   @Roles('ADMIN', 'MANAGER')
+//   @RequirePermissions(PERMISSIONS.INCOMING_CREATE)
 //   @Post()
 //   async createQuickIncoming(@Body() body: any, @Req() req: any) {
 //     const {
@@ -323,6 +380,8 @@ export class IncomingController {
 //       externalPartyName,
 //       deliveryMethod,
 //     } = body ?? {};
+
+//     const meta = extractClientMeta(req); // { ip, workstation }
 
 //     if (!documentTitle || !String(documentTitle).trim()) {
 //       throw new BadRequestException('documentTitle is required');
@@ -345,16 +404,13 @@ export class IncomingController {
 //         deliveryMethod: String(deliveryMethod),
 //       },
 //       req.user,
+//       meta,
 //     );
 //   }
 
-//   @Roles('ADMIN', 'MANAGER')
+//   @RequirePermissions(PERMISSIONS.INCOMING_FORWARD)
 //   @Post(':id/forward')
-//   async forward(
-//     @Param('id') id: string,
-//     @Body() body: any,
-//     @Req() req: any,
-//   ) {
+//   async forward(@Param('id') id: string, @Body() body: any, @Req() req: any) {
 //     const payload = {
 //       targetDepartmentId: Number(body?.targetDepartmentId),
 //       assignedToUserId:
@@ -364,13 +420,16 @@ export class IncomingController {
 //       note: body?.note ?? null,
 //       closePrevious: body?.closePrevious !== false,
 //     };
+
+//     const meta = extractClientMeta(req); // { ip, workstation }
+
 //     if (!payload.targetDepartmentId || isNaN(payload.targetDepartmentId)) {
 //       throw new BadRequestException('targetDepartmentId is required');
 //     }
-//     return this.incomingService.forwardIncoming(id, payload, req.user);
+//     return this.incomingService.forwardIncoming(id, payload, req.user,meta);
 //   }
 
-//   @Roles('ADMIN', 'MANAGER')
+//   @RequirePermissions(PERMISSIONS.INCOMING_UPDATE_STATUS)
 //   @Patch('distributions/:distId/status')
 //   async changeDistStatus(
 //     @Param('distId') distId: string,
@@ -378,22 +437,27 @@ export class IncomingController {
 //     @Req() req: any,
 //   ) {
 //     const status = String(body?.status || '').trim();
+//     const meta = extractClientMeta(req); // { ip, workstation }
+
 //     if (!status) throw new BadRequestException('status is required');
 //     return this.incomingService.updateDistributionStatus(
 //       distId,
 //       status,
 //       body?.note ?? null,
 //       req.user,
+//       meta,
 //     );
 //   }
 
-//   @Roles('ADMIN', 'MANAGER')
+//   @RequirePermissions(PERMISSIONS.INCOMING_ASSIGN)
 //   @Patch('distributions/:distId/assign')
 //   async assignDist(
 //     @Param('distId') distId: string,
 //     @Body() body: any,
 //     @Req() req: any,
 //   ) {
+//     const meta = extractClientMeta(req); // { ip, workstation }
+
 //     if (!body?.assignedToUserId || isNaN(Number(body.assignedToUserId))) {
 //       throw new BadRequestException('assignedToUserId is required');
 //     }
@@ -402,41 +466,34 @@ export class IncomingController {
 //       Number(body.assignedToUserId),
 //       body?.note ?? null,
 //       req.user,
+//       meta,
 //     );
 //   }
 
-//   // 🔧 ملاحظة: دعم المسارين note/notes لتوافق الواجهة الحالية
-//   @Roles('ADMIN', 'MANAGER')
-//   @Post('distributions/:distId/note')
-//   async addDistNoteSingular(
-//     @Param('distId') distId: string,
-//     @Body() body: any,
-//     @Req() req: any,
-//   ) {
-//     const note = String(body?.note || '').trim();
-//     if (!note) throw new BadRequestException('note is required');
-//     return this.incomingService.addDistributionNote(distId, note, req.user);
-//   }
-
-//   @Roles('ADMIN', 'MANAGER')
+//   @RequirePermissions(PERMISSIONS.INCOMING_UPDATE_STATUS)
 //   @Post('distributions/:distId/notes')
-//   async addDistNotePlural(
+//   async addDistNote(
 //     @Param('distId') distId: string,
 //     @Body() body: any,
 //     @Req() req: any,
 //   ) {
 //     const note = String(body?.note || '').trim();
+//     const meta = extractClientMeta(req); // { ip, workstation }
+
 //     if (!note) throw new BadRequestException('note is required');
-//     return this.incomingService.addDistributionNote(distId, note, req.user);
+//     return this.incomingService.addDistributionNote(distId, note, req.user, meta);
 //   }
 
+//   @RequirePermissions(PERMISSIONS.INCOMING_READ)
 //   @Get('stats/daily')
 //   async daily(@Query('days') days?: string) {
 //     return this.incomingService.dailySeries(Number(days) || 30);
 //   }
 
+//   @RequirePermissions(PERMISSIONS.INCOMING_READ)
 //   @Get('stats/my-desk')
 //   async myDeskStatus(@Req() req: any) {
 //     return this.incomingService.myDeskStatus(req.user);
 //   }
 // }
+
