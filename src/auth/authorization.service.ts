@@ -32,7 +32,7 @@ export class AuthorizationService {
           .flatMap((r) => r.RolePermission ?? [])
           .map((rp) => rp.Permission?.code)
           .filter(Boolean)
-          .map((c) => c!.toLowerCase().trim()),
+          .map((c) => c.toLowerCase().trim()),
       ),
     );
 
@@ -40,7 +40,6 @@ export class AuthorizationService {
 
     // Debug اختياري
     if (process.env.DEBUG_PERMISSIONS === '1') {
-      // eslint-disable-next-line no-console
       console.log('[AuthorizationService.list]', {
         userId,
         roles: roles.map((r) => r.roleName),
@@ -55,11 +54,6 @@ export class AuthorizationService {
     this.cache.delete(userId);
   }
 }
-
-
-
-
-
 
 // // src/auth/authorization.service.ts
 
@@ -110,5 +104,3 @@ export class AuthorizationService {
 //     this.cache.delete(userId);
 //   }
 // }
-
-

@@ -24,7 +24,10 @@ export class OutgoingController {
 
   @RequirePermissions(PERMISSIONS.OUTGOING_READ)
   @Get('my-latest')
-  async myLatest(@Query('page') page?: string, @Query('pageSize') pageSize?: string) {
+  async myLatest(
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
     const p = Math.max(1, Number(page) || 1);
     const ps = Math.min(100, Number(pageSize) || 20);
     return this.outgoingService.getLatestOutgoing(p, ps);
@@ -98,19 +101,28 @@ export class OutgoingController {
         issueDate: issueDate ? String(issueDate) : undefined,
         signedByUserId: Number(signedByUserId),
       },
-      req.user,             // ⬅️ مرر المستخدم
-      meta,      
+      req.user, // ⬅️ مرر المستخدم
+      meta,
     );
   }
 
   @RequirePermissions(PERMISSIONS.OUTGOING_MARK_DELIVERED)
   @Post(':id/delivered')
-  async markDelivered(@Param('id') id: string, @Body() body: any, @Req() req: any) {
+  async markDelivered(
+    @Param('id') id: string,
+    @Body() body: any,
+    @Req() req: any,
+  ) {
     const delivered = !!body?.delivered;
     const proofPath = body?.proofPath ?? null;
-    
+
     const meta = extractClientMeta(req);
-    const res = await this.outgoingService.markDelivered(id, delivered, proofPath, meta);
+    const res = await this.outgoingService.markDelivered(
+      id,
+      delivered,
+      proofPath,
+      meta,
+    );
 
     // (اختياري) لو أردت إضافة userId في التدقيق من هنا بدل الخدمة:
     // يمكنك تعديل الخدمة لقبول userId أيضًا، أو أضف استدعاء AuditService هنا.
@@ -123,8 +135,6 @@ export class OutgoingController {
     return this.outgoingService.dailySeries(Number(days) || 30);
   }
 }
-
-
 
 // import {
 //   BadRequestException,
@@ -240,5 +250,3 @@ export class OutgoingController {
 //     return this.outgoingService.dailySeries(Number(days) || 30);
 //   }
 // }
-
-

@@ -13,7 +13,9 @@ import { UPLOAD_ROOT, ensureDir } from './common/storage';
 
 // ✅ JSON.stringify(BigInt) عالمي
 declare global {
-  interface BigInt { toJSON: () => string; }
+  interface BigInt {
+    toJSON: () => string;
+  }
 }
 if (!(BigInt.prototype as any).toJSON) {
   (BigInt.prototype as any).toJSON = function () {
@@ -49,7 +51,10 @@ async function bootstrap() {
   // ✅ أمان: Helmet (إعدادات مناسبة للإنتاج مع استثناءات التطوير)
   app.use(
     helmet({
-      frameguard: process.env.NODE_ENV !== 'production' ? false : { action: 'sameorigin' },
+      frameguard:
+        process.env.NODE_ENV !== 'production'
+          ? false
+          : { action: 'sameorigin' },
       crossOriginResourcePolicy: { policy: 'cross-origin' },
       // في التطوير نوقف CSP لتسهيل عمل Vite وأصوله
       contentSecurityPolicy:
@@ -63,7 +68,7 @@ async function bootstrap() {
             },
       // يمنع مشاكل بعض الأصول الحديثة
       crossOriginEmbedderPolicy: false,
-    })
+    }),
   );
 
   // ✅ ضغط HTTP
@@ -126,7 +131,8 @@ async function bootstrap() {
 
     req.clientIp = toIPv4(ipRaw);
     req.workstationName = (req.headers['x-workstation'] as string) || undefined;
-    req.clientTimezone = (req.headers['x-client-timezone'] as string) || undefined;
+    req.clientTimezone =
+      (req.headers['x-client-timezone'] as string) || undefined;
 
     next();
   });
@@ -180,8 +186,6 @@ console.log('DATABASE_URL =>', process.env.DATABASE_URL);
     setTimeout(() => process.exit(1), 120000);
   }
 })();
-
-
 
 // // src/main.ts
 
@@ -333,5 +337,3 @@ console.log('DATABASE_URL =>', process.env.DATABASE_URL);
 
 // console.log('DATABASE_URL =>', process.env.DATABASE_URL);
 // bootstrap();
-
-

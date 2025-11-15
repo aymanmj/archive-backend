@@ -1,11 +1,22 @@
 // src/escalation/escalation.module.ts
 
 import { Module } from '@nestjs/common';
+import { ScheduleModule } from '@nestjs/schedule';
 import { EscalationWorker } from './escalation.worker';
-import { PrismaService } from 'src/prisma/prisma.service';
+import { NotificationsModule } from 'src/notifications/notifications.module';
+import { PrismaModule } from 'src/prisma/prisma.module';
+import { TimelineModule } from 'src/timeline/timeline.module';
 
 @Module({
-  providers: [PrismaService, EscalationWorker],
-  exports: [],
+  imports: [
+    ScheduleModule.forRoot(),
+    PrismaModule,
+    TimelineModule,
+    NotificationsModule, 
+  ],
+  providers: [EscalationWorker],
+  exports: [
+    EscalationWorker,
+  ],
 })
 export class EscalationModule {}

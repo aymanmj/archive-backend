@@ -10,8 +10,8 @@ import { IncomingClearanceGuard } from 'src/common/guards/incoming-clearance.gua
 @Module({
   imports: [
     PrismaModule,
-    AuthModule,   // للمصادقة والصلاحيات
-    AuditModule,  // ✅ لتفعيل سجل التدقيق داخل IncomingService
+    AuthModule, // للمصادقة والصلاحيات
+    AuditModule, // ✅ لتفعيل سجل التدقيق داخل IncomingService
   ],
   providers: [IncomingService, IncomingClearanceGuard],
   controllers: [IncomingController],

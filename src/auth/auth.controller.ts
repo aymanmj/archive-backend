@@ -37,15 +37,26 @@ export class AuthController {
   @Post('login')
   @HttpCode(200)
   async login(@Req() req: any, @Body() body: LoginDto) {
-    const username = String(body?.username ?? '').trim().toLowerCase();
+    const username = String(body?.username ?? '')
+      .trim()
+      .toLowerCase();
     const ip = getClientIp(req);
 
     // تحقق من الحظر الحالي
+    // const lockTtl = await this.throttle.isLocked(ip, username);
+    // if (lockTtl > 0) {
+    //   throw new UnauthorizedException(
+    //     `تم حظر تسجيل الدخول مؤقتًا. حاول بعد ${lockTtl} ثانية.`,
+    //   );
+    // }
+
     const lockTtl = await this.throttle.isLocked(ip, username);
     if (lockTtl > 0) {
-      throw new UnauthorizedException(
-        `تم حظر تسجيل الدخول مؤقتًا. حاول بعد ${lockTtl} ثانية.`,
-      );
+      throw new UnauthorizedException({
+        code: 'LOCKED_UNTIL',
+        message: 'تم حظر تسجيل الدخول مؤقتًا بسبب عدد كبير من المحاولات.',
+        retryAfterSec: lockTtl,
+      });
     }
 
     try {
@@ -55,15 +66,31 @@ export class AuthController {
       return result;
     } catch (err) {
       // فشل → زدّ المحاولات وقد تفعّل الحظر
+      // const f = await this.throttle.onFailure(ip, username);
+      // if (f.locked) {
+      //   throw new UnauthorizedException(
+      //     `تم تجاوز عدد المحاولات. تم الحظر لمدة ${f.ttl} ثانية.`,
+      //   );
+      // }
+      // throw new UnauthorizedException(
+      //   `بيانات الدخول غير صحيحة. متبقّي محاولات: ${f.remaining} خلال ${f.ttl} ثانية.`,
+      // );
+
       const f = await this.throttle.onFailure(ip, username);
       if (f.locked) {
-        throw new UnauthorizedException(
-          `تم تجاوز عدد المحاولات. تم الحظر لمدة ${f.ttl} ثانية.`,
-        );
+        throw new UnauthorizedException({
+          code: 'LOCKED_AFTER_FAILURE',
+          message: `تم تجاوز عدد المحاولات. تم الحظر لمدة ${f.ttl} ثانية.`,
+          retryAfterSec: f.ttl,
+        });
       }
-      throw new UnauthorizedException(
-        `بيانات الدخول غير صحيحة. متبقّي محاولات: ${f.remaining} خلال ${f.ttl} ثانية.`,
-      );
+
+      throw new UnauthorizedException({
+        code: 'INVALID_CREDENTIALS',
+        message: 'بيانات الدخول غير صحيحة.',
+        remaining: f.remaining,
+        retryAfterSec: f.ttl,
+      });
     }
   }
 
@@ -75,12 +102,17 @@ export class AuthController {
       typeof req?.user?.sub === 'number'
         ? req.user.sub
         : typeof req?.user?.userId === 'number'
-        ? req.user.userId
-        : null;
+          ? req.user.userId
+          : null;
 
-    if (!userId) throw new BadRequestException('معرّف المستخدم غير متوفر في التوكن');
+    if (!userId)
+      throw new BadRequestException('معرّف المستخدم غير متوفر في التوكن');
 
-    return this.authService.changePassword(userId, dto.currentPassword, dto.newPassword);
+    return this.authService.changePassword(
+      userId,
+      dto.currentPassword,
+      dto.newPassword,
+    );
   }
 
   // ====== إصدار رابط إعادة التعيين (يتطلب USERS_MANAGE) ======
@@ -136,9 +168,6 @@ export class AuthController {
     return { ok: true };
   }
 }
-
-
-
 
 // // src/auth/auth.controller.ts
 
@@ -215,7 +244,6 @@ export class AuthController {
 //   async complete(@Body() dto: CompleteResetDto) {
 //     return this.authService.completePasswordReset(dto.token, dto.newPassword);
 //   }
-
 
 //   // ====== Permissions ======
 //   // الشكل القياسي

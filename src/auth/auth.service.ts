@@ -2,7 +2,13 @@
 
 import * as crypto from 'crypto';
 import * as bcrypt from 'bcrypt';
-import { Injectable, UnauthorizedException, BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  UnauthorizedException,
+  BadRequestException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { JwtService } from '@nestjs/jwt';
 
@@ -17,7 +23,10 @@ type PublicUser = {
 
 @Injectable()
 export class AuthService {
-  constructor(private prisma: PrismaService, private jwtService: JwtService) {}
+  constructor(
+    private prisma: PrismaService,
+    private jwtService: JwtService,
+  ) {}
 
   private async findUserByUsername(username: string) {
     return this.prisma.user.findUnique({
@@ -29,7 +38,9 @@ export class AuthService {
             Role: {
               select: {
                 roleName: true,
-                RolePermission: { select: { Permission: { select: { code: true } } } },
+                RolePermission: {
+                  select: { Permission: { select: { code: true } } },
+                },
               },
             },
           },
@@ -88,7 +99,9 @@ export class AuthService {
     const permissions = this.extractPermissions(user);
     const payload = this.buildJwtPayload(pub, permissions);
 
-    const expiresSeconds = Number(process.env.JWT_EXPIRES_SECONDS ?? 8 * 60 * 60);
+    const expiresSeconds = Number(
+      process.env.JWT_EXPIRES_SECONDS ?? 8 * 60 * 60,
+    );
     const token = await this.jwtService.signAsync(payload, {
       expiresIn: expiresSeconds,
       secret: process.env.JWT_SECRET || 'change_me',
@@ -98,28 +111,36 @@ export class AuthService {
     return { token, user: pub, mustChangePassword: !!user.mustChangePassword };
   }
 
+  async changePassword(
+    userId: number,
+    currentPassword: string,
+    newPassword: string,
+  ) {
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user || user.isDeleted === true || user.isActive === false) {
+      throw new UnauthorizedException('المستخدم غير متاح');
+    }
 
-  async changePassword(userId: number, currentPassword: string, newPassword: string) {
-  const user = await this.prisma.user.findUnique({ where: { id: userId } });
-  if (!user || user.isDeleted === true || user.isActive === false) {
-    throw new UnauthorizedException('المستخدم غير متاح');
-  }
+    const ok = await bcrypt.compare(
+      currentPassword ?? '',
+      user.passwordHash || '',
+    );
+    if (!ok) {
+      throw new UnauthorizedException('كلمة المرور الحالية غير صحيحة');
+    }
 
-  const ok = await bcrypt.compare(currentPassword ?? '', user.passwordHash || '');
-  if (!ok) {
-    throw new UnauthorizedException('كلمة المرور الحالية غير صحيحة');
-  }
+    if (!newPassword || newPassword.length < 6) {
+      throw new UnauthorizedException('كلمة المرور الجديدة قصيرة جدًا');
+    }
 
-  if (!newPassword || newPassword.length < 6) {
-    throw new UnauthorizedException('كلمة المرور الجديدة قصيرة جدًا');
-  }
+    const same = await bcrypt.compare(newPassword, user.passwordHash || '');
+    if (same) {
+      throw new UnauthorizedException(
+        'كلمة المرور الجديدة لا يجب أن تطابق الحالية',
+      );
+    }
 
-  const same = await bcrypt.compare(newPassword, user.passwordHash || '');
-  if (same) {
-    throw new UnauthorizedException('كلمة المرور الجديدة لا يجب أن تطابق الحالية');
-  }
-
-  const hash = await bcrypt.hash(newPassword, 12);
+    const hash = await bcrypt.hash(newPassword, 12);
     await this.prisma.user.update({
       where: { id: userId },
       data: { passwordHash: hash },
@@ -142,9 +163,16 @@ export class AuthService {
    * يطلق طلب إعادة تعيين كلمة مرور لمستخدم محدد (يحتاج صلاحية أدمن من الكونترولر).
    * يعيد لك الرابط الجاهز للاستخدام (نسلمه للمستخدم بأي قناة).
    */
-  async initiatePasswordReset(forUserId: number, createdByAdminId?: number, ttlMinutes = 30) {
-    const user = await this.prisma.user.findUnique({ where: { id: forUserId } });
-    if (!user || user.isDeleted) throw new NotFoundException('المستخدم غير موجود');
+  async initiatePasswordReset(
+    forUserId: number,
+    createdByAdminId?: number,
+    ttlMinutes = 30,
+  ) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: forUserId },
+    });
+    if (!user || user.isDeleted)
+      throw new NotFoundException('المستخدم غير موجود');
 
     const token = this.generateResetToken();
     const tokenHash = this.hashToken(token);
@@ -205,10 +233,6 @@ export class AuthService {
     return { ok: true };
   }
 }
-
-
-
-
 
 // // src/auth/auth.service.ts
 
@@ -315,5 +339,3 @@ export class AuthService {
 //     return { token, user: pub };
 //   }
 // }
-
-

@@ -1,11 +1,18 @@
 // src/notifications/notifications.controller.ts
 
-import { Controller, Get, Query, UseGuards, Patch, Body, Req } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Query,
+  UseGuards,
+  Patch,
+  Body,
+  Req,
+} from '@nestjs/common';
 import { NotificationsService } from './notifications.service';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { extractUserContext } from 'src/common/auth.util';
 import { Request } from 'express';
-
 
 @UseGuards(JwtAuthGuard)
 @Controller('notifications')
@@ -20,23 +27,18 @@ export class NotificationsController {
   ) {
     const { userId } = extractUserContext((req as any).user);
     return this.svc.listMy(
-      userId!,
+      userId,
       onlyUnread === '1',
       take ? Number(take) : 50,
     );
   }
 
   @Patch('read')
-  async markRead(
-    @Req() req: Request,
-    @Body() body: { ids: number[] },
-  ) {
+  async markRead(@Req() req: Request, @Body() body: { ids: number[] }) {
     const { userId } = extractUserContext((req as any).user);
-    return this.svc.markRead(userId!, body.ids ?? []);
+    return this.svc.markRead(userId, body.ids ?? []);
   }
 }
-
-
 
 // @UseGuards(JwtAuthGuard)
 // @Controller('notifications')

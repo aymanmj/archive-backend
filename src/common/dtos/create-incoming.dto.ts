@@ -1,5 +1,12 @@
 // src/incoming/dtos/create-incoming.dto.ts
-import { IsInt, IsOptional, IsString, IsEnum, IsISO8601, IsDateString } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  IsEnum,
+  IsISO8601,
+  IsDateString,
+} from 'class-validator';
 import { DeliveryMethod, UrgencyLevel } from '@prisma/client';
 
 export class CreateIncomingDto {

@@ -24,7 +24,9 @@ import { SecurityModule } from 'src/security/security.module'; // ✅ مهم
       imports: [ConfigModule],
       useFactory: (cfg: ConfigService) => ({
         secret: cfg.get<string>('JWT_SECRET', 'change_me'),
-        signOptions: { expiresIn: cfg.get<number>('JWT_EXPIRES_SECONDS', 8 * 60 * 60) },
+        signOptions: {
+          expiresIn: cfg.get<number>('JWT_EXPIRES_SECONDS', 8 * 60 * 60),
+        },
       }),
       inject: [ConfigService],
     }),
@@ -34,8 +36,6 @@ import { SecurityModule } from 'src/security/security.module'; // ✅ مهم
   exports: [AuthService, PassportModule, AuthorizationService, JwtModule],
 })
 export class AuthModule {}
-
-
 
 // import { Module } from '@nestjs/common';
 // import { JwtModule } from '@nestjs/jwt';
@@ -72,9 +72,6 @@ export class AuthModule {}
 //   exports: [AuthService, PassportModule, AuthorizationService, JwtModule, RbacService],
 // })
 // export class AuthModule {}
-
-
-
 
 // import { Module } from '@nestjs/common';
 // import { JwtModule } from '@nestjs/jwt';

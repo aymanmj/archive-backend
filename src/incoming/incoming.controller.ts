@@ -45,7 +45,7 @@ export class IncomingController {
     @Query('assigneeId') assigneeId?: string,
     @Query('incomingNumber') incomingNumber?: string,
     @Query('distributionId') distributionId?: string,
-    @Query('scope') scope?: 'overdue' | 'today' | 'week',
+    @Query('scope') scope?: 'overdue' | 'today' | 'week' | 'escalated', // 👈 أضفنا escalated هنا
   ) {
     return this.incomingService.myDesk(req.user, {
       page: Number(page) || 1,
@@ -73,7 +73,12 @@ export class IncomingController {
       ip: req.clientIp,
       workstation: req.workstationName,
     };
-    return this.incomingService.updateDistributionSLA(distId, body, req.user, meta);
+    return this.incomingService.updateDistributionSLA(
+      distId,
+      body,
+      req.user,
+      meta,
+    );
   }
 
   @RequirePermissions(PERMISSIONS.INCOMING_READ)
@@ -230,7 +235,12 @@ export class IncomingController {
     const meta = extractClientMeta(req); // { ip, workstation }
 
     if (!note) throw new BadRequestException('note is required');
-    return this.incomingService.addDistributionNote(distId, note, req.user, meta);
+    return this.incomingService.addDistributionNote(
+      distId,
+      note,
+      req.user,
+      meta,
+    );
   }
 
   @RequirePermissions(PERMISSIONS.INCOMING_READ)
@@ -245,10 +255,6 @@ export class IncomingController {
     return this.incomingService.myDeskStatus(req.user);
   }
 }
-
-
-
-
 
 // import {
 //   Body,
@@ -496,4 +502,3 @@ export class IncomingController {
 //     return this.incomingService.myDeskStatus(req.user);
 //   }
 // }
-

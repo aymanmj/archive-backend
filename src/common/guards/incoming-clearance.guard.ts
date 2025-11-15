@@ -22,7 +22,9 @@ export class IncomingClearanceGuard implements CanActivate {
 
   async canActivate(ctx: ExecutionContext): Promise<boolean> {
     const req = ctx.switchToHttp().getRequest();
-    const user = req.user as { id: number; securityClearanceRank: number } | undefined;
+    const user = req.user as
+      | { id: number; securityClearanceRank: number }
+      | undefined;
 
     if (!user) {
       throw new ForbiddenException('مصادقة مطلوبة');

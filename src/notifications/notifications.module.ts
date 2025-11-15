@@ -14,8 +14,6 @@ import { NotificationsGateway } from './notifications.gateway';
 })
 export class NotificationsModule {}
 
-
-
 // // src/notifications/notifications.module.ts
 
 // import { Module } from '@nestjs/common';
@@ -23,7 +21,6 @@ export class NotificationsModule {}
 // import { NotificationsService } from 'src/notifications/notifications.service';
 // import { NotificationsController } from './notifications.controller';
 // import { NotificationsGateway } from 'src/notifications/notifications.gateway';
-
 
 // @Module({
 //   providers: [PrismaService, NotificationsService, NotificationsGateway],

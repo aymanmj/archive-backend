@@ -11,36 +11,76 @@ export class DashboardService {
   // == عدّادات أساسية ==
   async totals() {
     const now = new Date();
-    const todayStart = new Date(now); todayStart.setHours(0,0,0,0);
-    const todayEnd   = new Date(now); todayEnd.setHours(23,59,59,999);
+    const todayStart = new Date(now);
+    todayStart.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(now);
+    todayEnd.setHours(23, 59, 59, 999);
 
-    const last7Start = new Date(now); last7Start.setDate(last7Start.getDate() - 6); last7Start.setHours(0,0,0,0);
-    const last7End   = todayEnd;
+    const last7Start = new Date(now);
+    last7Start.setDate(last7Start.getDate() - 6);
+    last7Start.setHours(0, 0, 0, 0);
+    const last7End = todayEnd;
 
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const monthEnd   = todayEnd;
+    const monthEnd = todayEnd;
 
-    const whereIncoming = (a: Date, b: Date): Prisma.IncomingRecordWhereInput => ({ receivedDate: { gte: a, lte: b } });
-    const whereOutgoing = (a: Date, b: Date): Prisma.OutgoingRecordWhereInput => ({ issueDate:    { gte: a, lte: b } });
+    const whereIncoming = (
+      a: Date,
+      b: Date,
+    ): Prisma.IncomingRecordWhereInput => ({
+      receivedDate: { gte: a, lte: b },
+    });
+    const whereOutgoing = (
+      a: Date,
+      b: Date,
+    ): Prisma.OutgoingRecordWhereInput => ({ issueDate: { gte: a, lte: b } });
 
     const [
-      inToday,  inWeek,  inMonth,  inAll,
-      outToday, outWeek, outMonth, outAll,
+      inToday,
+      inWeek,
+      inMonth,
+      inAll,
+      outToday,
+      outWeek,
+      outMonth,
+      outAll,
     ] = await this.prisma.$transaction([
-      this.prisma.incomingRecord.count({ where: whereIncoming(todayStart, todayEnd) }),
-      this.prisma.incomingRecord.count({ where: whereIncoming(last7Start, last7End) }),
-      this.prisma.incomingRecord.count({ where: whereIncoming(monthStart, monthEnd) }),
+      this.prisma.incomingRecord.count({
+        where: whereIncoming(todayStart, todayEnd),
+      }),
+      this.prisma.incomingRecord.count({
+        where: whereIncoming(last7Start, last7End),
+      }),
+      this.prisma.incomingRecord.count({
+        where: whereIncoming(monthStart, monthEnd),
+      }),
       this.prisma.incomingRecord.count(),
 
-      this.prisma.outgoingRecord.count({ where: whereOutgoing(todayStart, todayEnd) }),
-      this.prisma.outgoingRecord.count({ where: whereOutgoing(last7Start, last7End) }),
-      this.prisma.outgoingRecord.count({ where: whereOutgoing(monthStart, monthEnd) }),
+      this.prisma.outgoingRecord.count({
+        where: whereOutgoing(todayStart, todayEnd),
+      }),
+      this.prisma.outgoingRecord.count({
+        where: whereOutgoing(last7Start, last7End),
+      }),
+      this.prisma.outgoingRecord.count({
+        where: whereOutgoing(monthStart, monthEnd),
+      }),
       this.prisma.outgoingRecord.count(),
     ]);
 
     return {
-      incoming: { today: inToday, last7Days: inWeek, thisMonth: inMonth, all: inAll },
-      outgoing: { today: outToday, last7Days: outWeek, thisMonth: outMonth, all: outAll },
+      incoming: {
+        today: inToday,
+        last7Days: inWeek,
+        thisMonth: inMonth,
+        all: inAll,
+      },
+      outgoing: {
+        today: outToday,
+        last7Days: outWeek,
+        thisMonth: outMonth,
+        all: outAll,
+      },
       generatedAt: now,
     };
   }
@@ -69,17 +109,22 @@ export class DashboardService {
     ]);
 
     const incMap = new Map<string, number>();
-    incRows.forEach(r => incMap.set(new Date(r.d).toISOString().slice(0,10), Number(r.c)));
+    incRows.forEach((r) =>
+      incMap.set(new Date(r.d).toISOString().slice(0, 10), Number(r.c)),
+    );
 
     const outMap = new Map<string, number>();
-    outRows.forEach(r => outMap.set(new Date(r.d).toISOString().slice(0,10), Number(r.c)));
+    outRows.forEach((r) =>
+      outMap.set(new Date(r.d).toISOString().slice(0, 10), Number(r.c)),
+    );
 
     const seriesIncoming: { date: string; count: number }[] = [];
     const seriesOutgoing: { date: string; count: number }[] = [];
 
     for (let i = n - 1; i >= 0; i--) {
-      const d = new Date(); d.setDate(d.getDate() - i);
-      const key = d.toISOString().slice(0,10);
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const key = d.toISOString().slice(0, 10);
       seriesIncoming.push({ date: key, count: incMap.get(key) ?? 0 });
       seriesOutgoing.push({ date: key, count: outMap.get(key) ?? 0 });
     }
@@ -96,9 +141,15 @@ export class DashboardService {
       ],
     };
     const [open, prog, closed] = await this.prisma.$transaction([
-      this.prisma.incomingDistribution.count({ where: { ...base, status: 'Open' as any } }),
-      this.prisma.incomingDistribution.count({ where: { ...base, status: 'InProgress' as any } }),
-      this.prisma.incomingDistribution.count({ where: { ...base, status: 'Closed' as any } }),
+      this.prisma.incomingDistribution.count({
+        where: { ...base, status: 'Open' as any },
+      }),
+      this.prisma.incomingDistribution.count({
+        where: { ...base, status: 'InProgress' as any },
+      }),
+      this.prisma.incomingDistribution.count({
+        where: { ...base, status: 'Closed' as any },
+      }),
     ]);
     return { open, inProgress: prog, closed };
   }

@@ -1,6 +1,12 @@
 // src/timeline/timeline.controller.ts
 
-import { Controller, Get, Param, ParseIntPipe, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Param,
+  ParseIntPipe,
+  UseGuards,
+} from '@nestjs/common';
 import { TimelineService } from './timeline.service';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 

@@ -1,8 +1,16 @@
 import {
-  Body, Controller, Get, Patch, Param, ParseIntPipe, Query, Post, UseGuards,
+  Body,
+  Controller,
+  Get,
+  Patch,
+  Param,
+  ParseIntPipe,
+  Query,
+  Post,
+  UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
-import { RequirePermissions  } from 'src/auth/permissions.decorator';
+import { RequirePermissions } from 'src/auth/permissions.decorator';
 import { PERMISSIONS } from 'src/auth/permissions.constants';
 import { DepartmentsService } from './departments.service';
 import { UpdateStatusDto } from './dto/update-status.dto';
@@ -40,9 +48,6 @@ export class DepartmentsController {
     return this.departmentsService.toggleStatus(id);
   }
 }
-
-
-
 
 // // src/departments/departments.controller.ts
 
@@ -97,4 +102,3 @@ export class DepartmentsController {
 //     return this.departmentsService.toggleStatus(id);
 //   }
 // }
-

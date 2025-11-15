@@ -6,12 +6,12 @@ import { Prisma } from '@prisma/client';
 type SearchAuditParams = {
   page?: number;
   pageSize?: number;
-  q?: string;               // يبحث في actionType + actionDescription
-  userId?: number;          // تصفية حسب المستخدم
-  documentId?: string;      // تصفية حسب الوثيقة (bigint في DB)
-  actionType?: string;      // نوع الإجراء
-  from?: string;            // بداية نطاق التاريخ (ISO string)
-  to?: string;              // نهاية نطاق التاريخ (ISO string)
+  q?: string; // يبحث في actionType + actionDescription
+  userId?: number; // تصفية حسب المستخدم
+  documentId?: string; // تصفية حسب الوثيقة (bigint في DB)
+  actionType?: string; // نوع الإجراء
+  from?: string; // بداية نطاق التاريخ (ISO string)
+  to?: string; // نهاية نطاق التاريخ (ISO string)
 };
 
 @Injectable()
@@ -58,7 +58,6 @@ export class AuditService {
     });
   }
 
-
   // alias مريح يوافق الاستدعاءات الموجودة this.audit.add({...})
   async add(input: {
     userId?: number | null;
@@ -74,7 +73,10 @@ export class AuditService {
     // جهّز documentId كـ BigInt (أو null)
     let docId: bigint | null = null;
     if (input.documentId !== undefined && input.documentId !== null) {
-      docId = typeof input.documentId === 'bigint' ? input.documentId : BigInt(input.documentId);
+      docId =
+        typeof input.documentId === 'bigint'
+          ? input.documentId
+          : BigInt(input.documentId);
     }
 
     // استخدم أي اسم متاح للوصف
@@ -90,7 +92,6 @@ export class AuditService {
     });
   }
 
-
   async search(params: SearchAuditParams) {
     const page = Math.max(1, Number(params.page) || 1);
     const pageSize = Math.min(100, Number(params.pageSize) || 20);
@@ -103,12 +104,33 @@ export class AuditService {
       const q = params.q.trim();
       where.OR = [
         { actionType: { contains: q, mode: Prisma.QueryMode.insensitive } },
-        { actionDescription: { contains: q, mode: Prisma.QueryMode.insensitive } },
+        {
+          actionDescription: {
+            contains: q,
+            mode: Prisma.QueryMode.insensitive,
+          },
+        },
         // 🔎 المستخدم (عدّل اسم العلاقة حسب سكيمتك لو مختلف)
-        { User: { is: { fullName: { contains: q, mode: Prisma.QueryMode.insensitive } } } },
-        { User: { is: { username: { contains: q, mode: Prisma.QueryMode.insensitive } } } },
+        {
+          User: {
+            is: {
+              fullName: { contains: q, mode: Prisma.QueryMode.insensitive },
+            },
+          },
+        },
+        {
+          User: {
+            is: {
+              username: { contains: q, mode: Prisma.QueryMode.insensitive },
+            },
+          },
+        },
         // 🔎 الوثيقة (عدّل اسم العلاقة حسب سكيمتك لو مختلف)
-        { Document: { is: { title: { contains: q, mode: Prisma.QueryMode.insensitive } } } },
+        {
+          Document: {
+            is: { title: { contains: q, mode: Prisma.QueryMode.insensitive } },
+          },
+        },
       ];
     }
 
@@ -128,7 +150,10 @@ export class AuditService {
 
     // تصفية حسب نوع الإجراء
     if (params.actionType && params.actionType.trim()) {
-      where.actionType = { contains: params.actionType.trim(), mode: Prisma.QueryMode.insensitive };
+      where.actionType = {
+        contains: params.actionType.trim(),
+        mode: Prisma.QueryMode.insensitive,
+      };
     }
 
     // نطاق التاريخ — يعتمد createdAt (تأكّد من وجوده في الموديل)

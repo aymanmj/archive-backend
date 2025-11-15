@@ -1,6 +1,5 @@
 // src/auth/dto/initiate-reset.dto.ts
 
-
 import { IsInt, IsOptional } from 'class-validator';
 
 export class InitiateResetDto {

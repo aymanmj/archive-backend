@@ -1,5 +1,10 @@
 // src/common/guards/clearance.guard.ts
-import { CanActivate, ExecutionContext, ForbiddenException, Injectable } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  ForbiddenException,
+  Injectable,
+} from '@nestjs/common';
 import { PrismaService } from '@/prisma/prisma.service';
 
 @Injectable()
@@ -18,7 +23,9 @@ export class ClearanceGuard implements CanActivate {
 
     if (!doc) throw new ForbiddenException('Document not found');
     if (user.securityClearanceRank < doc.securityLevel.rankOrder) {
-      throw new ForbiddenException('Insufficient clearance to access this document');
+      throw new ForbiddenException(
+        'Insufficient clearance to access this document',
+      );
     }
     return true;
   }

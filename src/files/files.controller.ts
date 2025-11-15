@@ -95,7 +95,10 @@ export class FilesController {
       limits: { fileSize: 50 * 1024 * 1024 },
     }),
   )
-  async upload(@Param('id') id: string, @UploadedFile() file?: Express.Multer.File) {
+  async upload(
+    @Param('id') id: string,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
     if (!file) throw new BadRequestException('No file provided');
     const docId = BigInt(id as any);
     const checksum = await sha256OfFile(file.path);
@@ -120,7 +123,9 @@ export class FilesController {
         documentId: docId,
         fileNameOriginal: file.originalname,
         storagePath: relative.replace(/\\/g, '/'),
-        fileExtension: extname(file.originalname).replace('.', '').toLowerCase(),
+        fileExtension: extname(file.originalname)
+          .replace('.', '')
+          .toLowerCase(),
         fileSizeBytes: BigInt(file.size),
         checksumHash: checksum,
         versionNumber: nextVersion,
@@ -153,16 +158,15 @@ export class FilesController {
   @Delete('files/:fileId')
   async remove(@Param('fileId') fileId: string) {
     const idNum = BigInt(fileId as any);
-    const f = await this.prisma.documentFile.findUnique({ where: { id: idNum } });
+    const f = await this.prisma.documentFile.findUnique({
+      where: { id: idNum },
+    });
     if (!f) throw new BadRequestException('File not found');
 
     await this.prisma.documentFile.delete({ where: { id: idNum } });
     return { ok: true };
   }
 }
-
-
-
 
 // // src/files/files.controller.ts
 
@@ -334,5 +338,3 @@ export class FilesController {
 //     return { ok: true };
 //   }
 // }
-
-

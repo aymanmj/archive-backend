@@ -45,15 +45,11 @@ function baseImports() {
     SecurityModule,
     TimelineModule,
     EscalationModule,
-
   ];
 }
 
 function fullImports() {
-  return [
-    ...baseImports(),
-    NotificationsModule,
-  ];
+  return [...baseImports(), NotificationsModule];
 }
 
 const SAFE_BOOT = process.env.SAFE_BOOT === '1';
@@ -70,9 +66,6 @@ const importsArr = SAFE_BOOT ? baseImports() : fullImports();
   ],
 })
 export class AppModule {}
-
-
-
 
 // // src/app.module.ts
 
@@ -101,8 +94,6 @@ export class AppModule {}
 // import { TimelineModule } from './timeline/timeline.module';
 // import { EscalationModule } from './escalation/escalation.module';
 
-
-
 // @Module({
 //   imports: [
 //     ScheduleModule.forRoot(),
@@ -130,11 +121,6 @@ export class AppModule {}
 //   ],
 // })
 // export class AppModule {}
-
-
-
-
-
 
 // // src/app.module.ts
 
@@ -183,7 +169,3 @@ export class AppModule {}
 //   ],
 // })
 // export class AppModule {}
-
-
-
-

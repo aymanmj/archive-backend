@@ -1,13 +1,22 @@
 // src/users/users.controller.ts
 
-
 import {
-  Controller, Body, Get, Post, Param, Req, UseGuards, ParseIntPipe,
-  BadRequestException, Query, Patch,
+  Controller,
+  Body,
+  Get,
+  Post,
+  Param,
+  Req,
+  UseGuards,
+  ParseIntPipe,
+  BadRequestException,
+  Query,
+  Patch,
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 import { PrismaService } from 'src/prisma/prisma.service';
+import { LoginThrottleService } from 'src/security/services/login-throttle.service';
 import { AuthorizationService } from 'src/auth/authorization.service';
 import { RequirePermissions } from 'src/auth/permissions.decorator';
 import { PERMISSIONS } from 'src/auth/permissions.constants';
@@ -22,6 +31,7 @@ export class UsersController {
     private usersService: UsersService,
     private prisma: PrismaService,
     private authz: AuthorizationService,
+    private throttle: LoginThrottleService,
   ) {}
 
   // ---------------- Me ----------------
@@ -46,7 +56,11 @@ export class UsersController {
 
   @RequirePermissions([PERMISSIONS.USERS_MANAGE])
   @Post(':id/reset-password')
-  async resetPassword(@Param('id', ParseIntPipe) id: number, @Body() body: ResetPasswordDto, @Req() req: any) {
+  async resetPassword(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: ResetPasswordDto,
+    @Req() req: any,
+  ) {
     const actorId = Number(req?.user?.sub) || null;
     return this.usersService.resetPassword(id, body.newPassword, actorId);
   }
@@ -54,16 +68,41 @@ export class UsersController {
   // إعادة تعيين إلى كلمة مؤقتة + إلزام تغييرها
   @RequirePermissions([PERMISSIONS.USERS_MANAGE])
   @Post(':id/reset-to-temporary')
-  async resetToTemporary(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+  async resetToTemporary(
+    @Param('id', ParseIntPipe) id: number,
+    @Req() req: any,
+  ) {
     const actorId = Number(req?.user?.sub) || null;
     return this.usersService.adminResetToTemporary(id, actorId);
+  }
+
+  // فتح حظر تسجيل الدخول لمستخدم معيّن
+  @RequirePermissions([PERMISSIONS.USERS_MANAGE])
+  @Post(':id/unlock-login')
+  async unlockLogin(@Param('id', ParseIntPipe) id: number) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: { username: true },
+    });
+
+    if (!user) {
+      throw new BadRequestException('المستخدم غير موجود');
+    }
+
+    await this.throttle.clearForUsername(user.username.toLowerCase());
+
+    return { ok: true };
   }
 
   // يغيّر المستخدم كلمته بنفسه
   @Patch('change-password')
   async changeOwn(@Req() req: any, @Body() body: ChangePasswordDto) {
     const userId = Number(req?.user?.sub);
-    return this.usersService.changeOwnPassword(userId, body.currentPassword, body.newPassword);
+    return this.usersService.changeOwnPassword(
+      userId,
+      body.currentPassword,
+      body.newPassword,
+    );
   }
 
   // ---------------- List (رسمي) ----------------
@@ -76,15 +115,26 @@ export class UsersController {
   ) {
     const p = Math.max(1, Number(page) || 1);
     const ps = Math.min(100, Math.max(1, Number(pageSize) || 30));
-    const data = await this.usersService.list({ search, page: p, pageSize: ps });
-    return { success: true, data: { items: data.items, total: data.total, page: p, pageSize: ps } };
+    const data = await this.usersService.list({
+      search,
+      page: p,
+      pageSize: ps,
+    });
+    return {
+      success: true,
+      data: { items: data.items, total: data.total, page: p, pageSize: ps },
+    };
   }
 
   // ---------------- Basic ----------------
   @RequirePermissions(PERMISSIONS.USERS_READ)
   @Get('list-basic')
   async listBasic(@Query('search') search?: string) {
-    const data = await this.usersService.list({ search, page: 1, pageSize: 500 });
+    const data = await this.usersService.list({
+      search,
+      page: 1,
+      pageSize: 500,
+    });
     return data.items.map((u) => ({
       id: u.id,
       fullName: u.fullName,
@@ -100,7 +150,9 @@ export class UsersController {
     const users = await this.prisma.user.findMany({
       where: { isActive: true, departmentId: depId },
       select: {
-        id: true, fullName: true, username: true,
+        id: true,
+        fullName: true,
+        username: true,
         department: { select: { id: true, name: true } },
       },
       orderBy: { fullName: 'asc' },
@@ -109,7 +161,9 @@ export class UsersController {
       id: u.id,
       fullName: u.fullName,
       username: u.username,
-      department: u.department ? { id: u.department.id, name: u.department.name } : null,
+      department: u.department
+        ? { id: u.department.id, name: u.department.name }
+        : null,
     }));
   }
 
@@ -120,12 +174,19 @@ export class UsersController {
       orderBy: { roleName: 'asc' },
       select: { id: true, roleName: true, isSystem: true },
     });
-    return roles.map(r => ({ id: r.id, name: r.roleName, isSystem: r.isSystem }));
+    return roles.map((r) => ({
+      id: r.id,
+      name: r.roleName,
+      isSystem: r.isSystem,
+    }));
   }
 
   @RequirePermissions(PERMISSIONS.USERS_MANAGE)
   @Post(':id/roles')
-  async setUserRoles(@Param('id', ParseIntPipe) id: number, @Body() body: { roleIds: number[] }) {
+  async setUserRoles(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { roleIds: number[] },
+  ) {
     const roleIds = Array.isArray(body?.roleIds) ? body.roleIds : [];
     await this.prisma.userRole.deleteMany({ where: { userId: id } });
     if (!roleIds.length) return { ok: true, updated: 0 };
@@ -135,15 +196,13 @@ export class UsersController {
       select: { id: true },
     });
     const created = await this.prisma.$transaction(
-      roles.map(r => this.prisma.userRole.create({ data: { userId: id, roleId: r.id } }))
+      roles.map((r) =>
+        this.prisma.userRole.create({ data: { userId: id, roleId: r.id } }),
+      ),
     );
     return { ok: true, updated: created.length };
   }
 }
-
-
-
-
 
 // import {
 //   Controller,
@@ -285,5 +344,3 @@ export class UsersController {
 //   }
 
 // }
-
-

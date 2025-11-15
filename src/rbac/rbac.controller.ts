@@ -45,14 +45,19 @@ export class RbacController {
   // ------- User ↔ Roles (GET) -------
   @Get('users/:userId/roles')
   @HttpCode(200)
-  async getUserRoles(
-    @Param('userId', ParseIntPipe) userId: number,
-  ): Promise<ApiResponse<{
-    userId: number;
-    roleIds: number[];
-    roles: Array<{ id: number; roleName: string; description?: string | null; isSystem?: boolean }>;
-    count: number;
-  }>> {
+  async getUserRoles(@Param('userId', ParseIntPipe) userId: number): Promise<
+    ApiResponse<{
+      userId: number;
+      roleIds: number[];
+      roles: Array<{
+        id: number;
+        roleName: string;
+        description?: string | null;
+        isSystem?: boolean;
+      }>;
+      count: number;
+    }>
+  > {
     const dto = await this.rbac.getUserRoles(userId);
     return { success: true, data: dto };
   }
@@ -74,12 +79,14 @@ export class RbacController {
     @Param('userId', ParseIntPipe) userId: number,
     @Body() body: any,
     @Req() req: any,
-  ): Promise<ApiResponse<{ ok: true; userId: number; count: number; roleIds: number[] }>> {
+  ): Promise<
+    ApiResponse<{ ok: true; userId: number; count: number; roleIds: number[] }>
+  > {
     const roleIds: number[] = Array.isArray(body?.roleIds)
       ? body.roleIds
       : Array.isArray(body?.roles)
-      ? body.roles
-      : [];
+        ? body.roles
+        : [];
     const actorId = req?.user?.sub ?? null;
     const result = await this.rbac.setUserRoles(userId, roleIds, actorId);
     return { success: true, data: result };
@@ -91,12 +98,14 @@ export class RbacController {
     @Param('userId', ParseIntPipe) userId: number,
     @Body() body: any,
     @Req() req: any,
-  ): Promise<ApiResponse<{ ok: true; userId: number; count: number; roleIds: number[] }>> {
+  ): Promise<
+    ApiResponse<{ ok: true; userId: number; count: number; roleIds: number[] }>
+  > {
     const roleIds: number[] = Array.isArray(body?.roleIds)
       ? body.roleIds
       : Array.isArray(body?.roles)
-      ? body.roles
-      : [];
+        ? body.roles
+        : [];
     const actorId = req?.user?.sub ?? null;
     const result = await this.rbac.setUserRoles(userId, roleIds, actorId);
     return { success: true, data: result };
@@ -107,7 +116,9 @@ export class RbacController {
   @HttpCode(200)
   async getRolePermissions(
     @Param('roleId', ParseIntPipe) roleId: number,
-  ): Promise<ApiResponse<{ roleId: number; roleName: string; permissionCodes: string[] }>> {
+  ): Promise<
+    ApiResponse<{ roleId: number; roleName: string; permissionCodes: string[] }>
+  > {
     const dto = await this.rbac.getRolePermissions(roleId);
     return { success: true, data: dto };
   }
@@ -118,20 +129,28 @@ export class RbacController {
     @Param('roleId', ParseIntPipe) roleId: number,
     @Body() body: any,
     @Req() req: any,
-  ): Promise<ApiResponse<{ ok: true; roleId: number; permissionCodes: string[]; count: number }>> {
+  ): Promise<
+    ApiResponse<{
+      ok: true;
+      roleId: number;
+      permissionCodes: string[];
+      count: number;
+    }>
+  > {
     const permissionCodes: string[] = Array.isArray(body?.permissionCodes)
       ? body.permissionCodes
       : Array.isArray(body?.permissions)
-      ? body.permissions
-      : [];
+        ? body.permissions
+        : [];
     const actorId = req?.user?.sub ?? null;
-    const dto = await this.rbac.setRolePermissions(roleId, permissionCodes, actorId);
+    const dto = await this.rbac.setRolePermissions(
+      roleId,
+      permissionCodes,
+      actorId,
+    );
     return { success: true, data: dto };
   }
 }
-
-
-
 
 // // src/rbac/rbac.controller.ts
 
@@ -258,4 +277,3 @@ export class RbacController {
 //     return { success: true, data: dto };
 //   }
 // }
-

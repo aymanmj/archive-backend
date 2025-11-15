@@ -1,7 +1,11 @@
 // src/users/users.service.ts
 
-
-import { BadRequestException, Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
 import { Prisma } from '@prisma/client';
@@ -11,7 +15,10 @@ type ListParams = { search?: string; page: number; pageSize: number };
 
 @Injectable()
 export class UsersService {
-  constructor(private prisma: PrismaService, private audit: AuditService) {}
+  constructor(
+    private prisma: PrismaService,
+    private audit: AuditService,
+  ) {}
 
   async getMe(userId: number) {
     const user = await this.prisma.user.findUnique({
@@ -30,7 +37,9 @@ export class UsersService {
       username: user.username,
       isActive: user.isActive,
       isSystem: user.isSystem,
-      department: user.department ? { id: user.department.id, name: user.department.name } : null,
+      department: user.department
+        ? { id: user.department.id, name: user.department.name }
+        : null,
       roles: user.UserRole.map((ur) => ur.Role.roleName),
       jobTitle: user.jobTitle,
       lastLoginAt: user.lastLoginAt,
@@ -40,20 +49,29 @@ export class UsersService {
   }
 
   private generateTempPassword() {
-    const s = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*';
-    return Array.from({ length: 12 }, () => s[Math.floor(Math.random() * s.length)]).join('');
+    const s =
+      'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*';
+    return Array.from(
+      { length: 12 },
+      () => s[Math.floor(Math.random() * s.length)],
+    ).join('');
   }
 
-  async createUser(dto: {
-    fullName: string;
-    username: string;
-    email?: string;
-    password?: string;
-    departmentId?: number;
-    isActive?: boolean;
-    roleIds?: number[];
-  }, actorUserId?: number | null) {
-    const exists = await this.prisma.user.findUnique({ where: { username: dto.username } });
+  async createUser(
+    dto: {
+      fullName: string;
+      username: string;
+      email?: string;
+      password?: string;
+      departmentId?: number;
+      isActive?: boolean;
+      roleIds?: number[];
+    },
+    actorUserId?: number | null,
+  ) {
+    const exists = await this.prisma.user.findUnique({
+      where: { username: dto.username },
+    });
     if (exists) throw new BadRequestException('Username already exists');
 
     const pwd = dto.password?.trim() || this.generateTempPassword();
@@ -86,7 +104,11 @@ export class UsersService {
         select: { id: true },
       });
       await this.prisma.$transaction(
-        roles.map((r) => this.prisma.userRole.create({ data: { userId: user.id, roleId: r.id } })),
+        roles.map((r) =>
+          this.prisma.userRole.create({
+            data: { userId: user.id, roleId: r.id },
+          }),
+        ),
       );
     }
 
@@ -94,10 +116,17 @@ export class UsersService {
     return { userId: user.id, tempPassword: dto.password ? undefined : pwd };
   }
 
-  async resetPassword(userId: number, newPassword: string, actorUserId?: number | null) {
+  async resetPassword(
+    userId: number,
+    newPassword: string,
+    actorUserId?: number | null,
+  ) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
-    if (user.isSystem) throw new BadRequestException('لا يمكن تعديل كلمة مرور السوبر أدمن من هنا');
+    if (user.isSystem)
+      throw new BadRequestException(
+        'لا يمكن تعديل كلمة مرور السوبر أدمن من هنا',
+      );
 
     const hash = await bcrypt.hash(newPassword, 12);
     await this.prisma.user.update({
@@ -118,7 +147,10 @@ export class UsersService {
   async adminResetToTemporary(userId: number, actorUserId?: number | null) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
-    if (user.isSystem) throw new BadRequestException('لا يمكن تعديل كلمة مرور السوبر أدمن من هنا');
+    if (user.isSystem)
+      throw new BadRequestException(
+        'لا يمكن تعديل كلمة مرور السوبر أدمن من هنا',
+      );
 
     const temp = this.generateTempPassword();
     const hash = await bcrypt.hash(temp, 12);
@@ -138,7 +170,11 @@ export class UsersService {
   }
 
   // يغيّر المستخدم كلمته بنفسه
-  async changeOwnPassword(userId: number, currentPassword: string, newPassword: string) {
+  async changeOwnPassword(
+    userId: number,
+    currentPassword: string,
+    newPassword: string,
+  ) {
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new NotFoundException('User not found');
 
@@ -161,9 +197,28 @@ export class UsersService {
         ? {
             isActive: true,
             OR: [
-              { fullName: { contains: search, mode: Prisma.QueryMode.insensitive } },
-              { username: { contains: search, mode: Prisma.QueryMode.insensitive } },
-              { department: { is: { name: { contains: search, mode: Prisma.QueryMode.insensitive } } } },
+              {
+                fullName: {
+                  contains: search,
+                  mode: Prisma.QueryMode.insensitive,
+                },
+              },
+              {
+                username: {
+                  contains: search,
+                  mode: Prisma.QueryMode.insensitive,
+                },
+              },
+              {
+                department: {
+                  is: {
+                    name: {
+                      contains: search,
+                      mode: Prisma.QueryMode.insensitive,
+                    },
+                  },
+                },
+              },
             ],
           }
         : { isActive: true };
@@ -175,7 +230,10 @@ export class UsersService {
         skip: (page - 1) * pageSize,
         take: pageSize,
         select: {
-          id: true, fullName: true, username: true, isActive: true,
+          id: true,
+          fullName: true,
+          username: true,
+          isActive: true,
           department: { select: { id: true, name: true } },
         },
       }),
@@ -187,15 +245,14 @@ export class UsersService {
       fullName: u.fullName,
       username: u.username,
       isActive: u.isActive,
-      department: u.department ? { id: u.department.id, name: u.department.name } : null,
+      department: u.department
+        ? { id: u.department.id, name: u.department.name }
+        : null,
     }));
 
     return { items: normalized, total };
   }
 }
-
-
-
 
 // // src/users/users.service.ts
 
@@ -271,7 +328,6 @@ export class UsersService {
 //       fromIP: null,           // أو استخرجه من req في الـ controller ومرّره
 //       workstationName: null,         // نفس الشيء
 //     });
-
 
 //     if (dto.roleIds?.length) {
 //       const roles = await this.prisma.role.findMany({
@@ -367,4 +423,3 @@ export class UsersService {
 //     return { items: normalized, total };
 //   }
 // }
-

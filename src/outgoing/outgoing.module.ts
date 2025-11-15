@@ -9,8 +9,8 @@ import { AuditModule } from 'src/audit/audit.module';
 @Module({
   imports: [
     PrismaModule,
-    AuthModule,   // للمصادقة والصلاحيات
-    AuditModule,  // ✅ لتفعيل سجل التدقيق داخل OutgoingService
+    AuthModule, // للمصادقة والصلاحيات
+    AuditModule, // ✅ لتفعيل سجل التدقيق داخل OutgoingService
   ],
   providers: [OutgoingService],
   controllers: [OutgoingController],

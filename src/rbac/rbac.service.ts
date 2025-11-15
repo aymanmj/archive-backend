@@ -30,10 +30,18 @@ export class RbacService {
   async getUserRoles(userId: number): Promise<{
     userId: number;
     roleIds: number[];
-    roles: Array<{ id: number; roleName: string; description: string | null; isSystem?: boolean }>;
+    roles: Array<{
+      id: number;
+      roleName: string;
+      description: string | null;
+      isSystem?: boolean;
+    }>;
     count: number;
   }> {
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    });
     if (!user) throw new NotFoundException('User not found');
 
     const rows = await this.prisma.userRole.findMany({
@@ -72,7 +80,9 @@ export class RbacService {
 
     await this.prisma.$transaction([
       this.prisma.userRole.deleteMany({ where: { userId } }),
-      ...roles.map((r) => this.prisma.userRole.create({ data: { userId, roleId: r.id } })),
+      ...roles.map((r) =>
+        this.prisma.userRole.create({ data: { userId, roleId: r.id } }),
+      ),
     ]);
 
     // invalidate كاش صلاحيات المستخدم
@@ -118,7 +128,12 @@ export class RbacService {
     roleId: number,
     permissionCodes: string[],
     actorId?: number | null,
-  ): Promise<{ ok: true; roleId: number; permissionCodes: string[]; count: number }> {
+  ): Promise<{
+    ok: true;
+    roleId: number;
+    permissionCodes: string[];
+    count: number;
+  }> {
     const perms = await this.prisma.permission.findMany({
       where: { code: { in: permissionCodes } },
       select: { id: true, code: true },
@@ -127,7 +142,9 @@ export class RbacService {
     await this.prisma.$transaction([
       this.prisma.rolePermission.deleteMany({ where: { roleId } }),
       ...perms.map((p) =>
-        this.prisma.rolePermission.create({ data: { roleId, permissionId: p.id } }),
+        this.prisma.rolePermission.create({
+          data: { roleId, permissionId: p.id },
+        }),
       ),
     ]);
 
@@ -158,9 +175,6 @@ export class RbacService {
     };
   }
 }
-
-
-
 
 // // src/rbac/rbac.service.ts
 
@@ -296,4 +310,3 @@ export class RbacService {
 //     };
 //   }
 // }
-

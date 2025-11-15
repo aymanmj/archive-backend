@@ -8,8 +8,7 @@ export type UserContext = {
 
 export function extractUserContext(user: any): UserContext {
   // يدعم id أو sub / ويدعم departmentId أو user.department?.id
-  const userIdRaw =
-    user?.id ?? user?.sub ?? user?.userId ?? user?.user_id ?? 0;
+  const userIdRaw = user?.id ?? user?.sub ?? user?.userId ?? user?.user_id ?? 0;
 
   const deptIdRaw =
     user?.departmentId ??

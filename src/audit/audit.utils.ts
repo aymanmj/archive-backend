@@ -1,6 +1,5 @@
 // src/audit/audit.utils.ts
 
-
 export function extractClientMeta(req: any) {
   // 1) workstation
   const workstation =
@@ -10,7 +9,10 @@ export function extractClientMeta(req: any) {
 
   // 2) raw IP candidates
   const hdr = (req.headers['x-forwarded-for'] as string) || '';
-  const list = hdr.split(',').map(s => s.trim()).filter(Boolean);
+  const list = hdr
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
   const cand = [
     ...list,
     req.ip,
@@ -26,7 +28,10 @@ export function extractClientMeta(req: any) {
 
   for (const c of cand) {
     const m4 = c.match(ipv4Re);
-    if (m4) { ip = m4[0]; break; }
+    if (m4) {
+      ip = m4[0];
+      break;
+    }
   }
   // لو ما لقيناش IPv4 خذ أول عنوان متاح (قد يكون ::1)
   if (!ip) ip = cand.find(Boolean) ?? null;
@@ -36,9 +41,6 @@ export function extractClientMeta(req: any) {
 
   return { ip, workstation };
 }
-
-
-
 
 // // src/audit/audit.utils.ts
 

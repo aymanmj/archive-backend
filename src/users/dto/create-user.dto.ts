@@ -1,38 +1,51 @@
 // src/users/dto/create-user.dto.ts
 
 import {
-  IsArray, IsBoolean, IsEmail, IsInt, IsNotEmpty, IsOptional, IsString, MinLength,
+  IsArray,
+  IsBoolean,
+  IsEmail,
+  IsInt,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MinLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreateUserDto {
-  @IsString() @IsNotEmpty()
+  @IsString()
+  @IsNotEmpty()
   fullName: string;
 
-  @IsString() @IsNotEmpty()
+  @IsString()
+  @IsNotEmpty()
   username: string;
 
-  @IsOptional() @IsEmail()
+  @IsOptional()
+  @IsEmail()
   email?: string;
 
   // إن لم تُرسل، السيرفس سيولّد كلمة مؤقتة
-  @IsOptional() @IsString() @MinLength(6)
+  @IsOptional()
+  @IsString()
+  @MinLength(6)
   password?: string;
 
-  @IsOptional() @Type(() => Number) @IsInt()
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt()
   departmentId?: number;
 
-  @IsOptional() @IsBoolean()
+  @IsOptional()
+  @IsBoolean()
   isActive?: boolean;
 
-  @IsOptional() @IsArray()
-  @Type(() => Number) @IsInt({ each: true })
+  @IsOptional()
+  @IsArray()
+  @Type(() => Number)
+  @IsInt({ each: true })
   roleIds?: number[];
 }
-
-
-
-
 
 // // src/users/dto/create-user.dto.ts
 

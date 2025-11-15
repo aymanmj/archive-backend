@@ -10,19 +10,25 @@ import { io, Socket } from 'socket.io-client';
 const prisma = new PrismaClient();
 
 // جدولة
-const CRON_EXPR: string | undefined = process.env.SLA_SCAN_INTERVAL_CRON?.trim() || undefined;
+const CRON_EXPR: string | undefined =
+  process.env.SLA_SCAN_INTERVAL_CRON?.trim() || undefined;
 const EVERY_MS_ENV = process.env.SLA_SCAN_EVERY_MS?.trim();
 const EVERY_MS: number | undefined =
-  EVERY_MS_ENV && !Number.isNaN(Number(EVERY_MS_ENV)) ? Number(EVERY_MS_ENV) : undefined;
+  EVERY_MS_ENV && !Number.isNaN(Number(EVERY_MS_ENV))
+    ? Number(EVERY_MS_ENV)
+    : undefined;
 
 // تذكير قبل الاستحقاق (دقائق)
 const REMINDER_MIN_BEFORE: number =
-  process.env.SLA_REMINDER_MINUTES_BEFORE && !Number.isNaN(Number(process.env.SLA_REMINDER_MINUTES_BEFORE))
+  process.env.SLA_REMINDER_MINUTES_BEFORE &&
+  !Number.isNaN(Number(process.env.SLA_REMINDER_MINUTES_BEFORE))
     ? Number(process.env.SLA_REMINDER_MINUTES_BEFORE)
     : 30;
 
 // Socket.IO (يبث للـ Gateway)
-const NOTI_WS_URL = (process.env.NOTI_WS_URL || '').trim() || 'http://localhost:3000/notifications';
+const NOTI_WS_URL =
+  (process.env.NOTI_WS_URL || '').trim() ||
+  'http://localhost:3000/notifications';
 let ws: Socket | null = null;
 
 function ensureWS() {
@@ -52,14 +58,36 @@ type EscLevel = {
   notifyAdmin?: boolean;
 };
 const POLICY: EscLevel[] = [
-  { level: 1, afterMinutesOverdue: 5,  priorityBump: 1, notifyAssignee: true  },
-  { level: 2, afterMinutesOverdue: 15, priorityBump: 1, notifyAssignee: true,  notifyManager: true },
-  { level: 3, afterMinutesOverdue: 30, priorityBump: 2, notifyAssignee: true,  notifyManager: true, notifyAdmin: true },
-  { level: 4, afterMinutesOverdue: 60, priorityBump: 2, notifyAssignee: true,  notifyManager: true, notifyAdmin: true },
+  { level: 1, afterMinutesOverdue: 5, priorityBump: 1, notifyAssignee: true },
+  {
+    level: 2,
+    afterMinutesOverdue: 15,
+    priorityBump: 1,
+    notifyAssignee: true,
+    notifyManager: true,
+  },
+  {
+    level: 3,
+    afterMinutesOverdue: 30,
+    priorityBump: 2,
+    notifyAssignee: true,
+    notifyManager: true,
+    notifyAdmin: true,
+  },
+  {
+    level: 4,
+    afterMinutesOverdue: 60,
+    priorityBump: 2,
+    notifyAssignee: true,
+    notifyManager: true,
+    notifyAdmin: true,
+  },
 ];
 
 // اختيار مدير القسم (بسيطة: أي مستخدم Active بدور ADMIN في نفس القسم)
-async function pickManagerForDepartment(deptId: number): Promise<number | null> {
+async function pickManagerForDepartment(
+  deptId: number,
+): Promise<number | null> {
   const mgr = await prisma.user.findFirst({
     where: {
       isActive: true,
@@ -71,13 +99,21 @@ async function pickManagerForDepartment(deptId: number): Promise<number | null> 
   return mgr?.id ?? null;
 }
 
-async function notifyUsers(userIds: number[], payload: { title: string; body: string; link?: string; severity?: 'info'|'warning'|'danger' }) {
+async function notifyUsers(
+  userIds: number[],
+  payload: {
+    title: string;
+    body: string;
+    link?: string;
+    severity?: 'info' | 'warning' | 'danger';
+  },
+) {
   const uniq = [...new Set(userIds.filter(Boolean))];
   if (!uniq.length) return;
 
   // 1) DB insert
   await prisma.notification.createMany({
-    data: uniq.map(uid => ({
+    data: uniq.map((uid) => ({
       userId: uid,
       title: payload.title,
       body: payload.body,
@@ -89,7 +125,10 @@ async function notifyUsers(userIds: number[], payload: { title: string; body: st
 
   // 2) WS broadcast via gateway
   try {
-    ensureWS().emit('notify-users', { userIds: uniq, payload: { ...payload, at: new Date().toISOString() } });
+    ensureWS().emit('notify-users', {
+      userIds: uniq,
+      payload: { ...payload, at: new Date().toISOString() },
+    });
   } catch (e) {
     console.error('[worker] WS emit error:', e);
   }
@@ -99,15 +138,21 @@ async function tick() {
   const now = new Date();
 
   // (أ) تذكير قبل الاستحقاق
-  const remindThreshold = new Date(now.getTime() + REMINDER_MIN_BEFORE * 60 * 1000);
+  const remindThreshold = new Date(
+    now.getTime() + REMINDER_MIN_BEFORE * 60 * 1000,
+  );
   const toRemind = await prisma.incomingDistribution.findMany({
     where: {
       status: { in: [DistributionStatus.Open, DistributionStatus.InProgress] },
       dueAt: { not: null, gte: now, lte: remindThreshold },
     },
     select: {
-      id: true, incomingId: true, dueAt: true, priority: true,
-      targetDepartmentId: true, assignedToUserId: true,
+      id: true,
+      incomingId: true,
+      dueAt: true,
+      priority: true,
+      targetDepartmentId: true,
+      assignedToUserId: true,
     },
     take: 500,
   });
@@ -143,15 +188,24 @@ async function tick() {
       dueAt: { not: null, lt: now },
     },
     select: {
-      id: true, incomingId: true, dueAt: true, priority: true, escalationCount: true,
-      targetDepartmentId: true, assignedToUserId: true,
+      id: true,
+      incomingId: true,
+      dueAt: true,
+      priority: true,
+      escalationCount: true,
+      targetDepartmentId: true,
+      assignedToUserId: true,
     },
     take: 500,
   });
 
   for (const d of overdue) {
-    const elapsedMin = Math.floor((now.getTime() - new Date(d.dueAt!).getTime()) / 60000);
-    const nextLevel = POLICY.slice().reverse().find(p => elapsedMin >= p.afterMinutesOverdue);
+    const elapsedMin = Math.floor(
+      (now.getTime() - new Date(d.dueAt!).getTime()) / 60000,
+    );
+    const nextLevel = POLICY.slice()
+      .reverse()
+      .find((p) => elapsedMin >= p.afterMinutesOverdue);
     if (!nextLevel) continue;
 
     const newPriority = Math.max(0, (d.priority ?? 0) + nextLevel.priorityBump);
@@ -159,7 +213,11 @@ async function tick() {
 
     await prisma.incomingDistribution.update({
       where: { id: d.id },
-      data: { escalationCount: newEscCount, priority: newPriority, lastUpdateAt: new Date() },
+      data: {
+        escalationCount: newEscCount,
+        priority: newPriority,
+        lastUpdateAt: new Date(),
+      },
     });
 
     await prisma.timelineEvent.create({
@@ -167,23 +225,32 @@ async function tick() {
         docId: d.incomingId,
         docType: 'INCOMING',
         eventType: 'SLA_ESCALATION',
-        details: { dueAt: d.dueAt, escalationCount: newEscCount, distributionId: d.id, elapsedMin },
+        details: {
+          dueAt: d.dueAt,
+          escalationCount: newEscCount,
+          distributionId: d.id,
+          elapsedMin,
+        },
       },
     });
 
     // إشعارات التصعيد
     const recipients: number[] = [];
-    if (nextLevel.notifyAssignee && d.assignedToUserId) recipients.push(d.assignedToUserId);
+    if (nextLevel.notifyAssignee && d.assignedToUserId)
+      recipients.push(d.assignedToUserId);
     if (nextLevel.notifyManager) {
       const mgr = await pickManagerForDepartment(d.targetDepartmentId);
       if (mgr) recipients.push(mgr);
     }
     if (nextLevel.notifyAdmin) {
       const admins = await prisma.user.findMany({
-        where: { isActive: true, UserRole: { some: { Role: { roleName: 'ADMIN' } } } },
+        where: {
+          isActive: true,
+          UserRole: { some: { Role: { roleName: 'ADMIN' } } },
+        },
         select: { id: true },
       });
-      recipients.push(...admins.map(a => a.id));
+      recipients.push(...admins.map((a) => a.id));
     }
 
     await notifyUsers(recipients, {
@@ -196,22 +263,29 @@ async function tick() {
 }
 
 // يغلّف tick مع التقاط الأخطاء
-const safeTick = () => tick().catch((e) => console.error('Worker tick error:', e));
+const safeTick = () =>
+  tick().catch((e) => console.error('Worker tick error:', e));
 
 async function main() {
-  console.log(`SLA Worker booting... (cron=${CRON_EXPR ?? '—'}, everyMs=${EVERY_MS ?? '—'}, remindBeforeMin=${REMINDER_MIN_BEFORE})`);
+  console.log(
+    `SLA Worker booting... (cron=${CRON_EXPR ?? '—'}, everyMs=${EVERY_MS ?? '—'}, remindBeforeMin=${REMINDER_MIN_BEFORE})`,
+  );
   ensureWS();
   await safeTick();
 
   if (CRON_EXPR) {
     console.log(`Scheduling with CRON: ${CRON_EXPR}`);
-    cron.schedule(CRON_EXPR, safeTick, { timezone: process.env.TZ || undefined });
+    cron.schedule(CRON_EXPR, safeTick, {
+      timezone: process.env.TZ || undefined,
+    });
   } else if (EVERY_MS && EVERY_MS > 0) {
     console.log(`Scheduling with setInterval: every ${EVERY_MS} ms`);
     setInterval(safeTick, EVERY_MS);
   } else {
     const fallback = 5 * 60 * 1000;
-    console.log(`No schedule env provided. Using default interval: ${fallback} ms (5 minutes)`);
+    console.log(
+      `No schedule env provided. Using default interval: ${fallback} ms (5 minutes)`,
+    );
     setInterval(safeTick, fallback);
   }
 }
@@ -220,8 +294,6 @@ main().catch((e) => {
   console.error(e);
   process.exit(1);
 });
-
-
 
 // // src/worker.ts
 

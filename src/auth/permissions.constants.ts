@@ -1,17 +1,30 @@
 // src/auth/permissions.constants.ts
 
-
 export type PermissionCode =
-  | 'incoming.read' | 'incoming.create' | 'incoming.forward' | 'incoming.assign' | 'incoming.updateStatus'
-  | 'outgoing.read' | 'outgoing.create' | 'outgoing.markDelivered' | 'outgoing.updateStatus' | 'outgoing.send'
-  | 'files.read'    | 'files.upload'    | 'files.delete'
-  | 'departments.read' | 'departments.create' | 'departments.updateStatus'
-  | 'users.read'  | 'users.manage'
-  | 'roles.read'  | 'roles.manage'
-  | 'admin.rbac'  | 'rbac.manage'
-  | 'audit.read'  |'dashboard.read';
-
-
+  | 'incoming.read'
+  | 'incoming.create'
+  | 'incoming.forward'
+  | 'incoming.assign'
+  | 'incoming.updateStatus'
+  | 'outgoing.read'
+  | 'outgoing.create'
+  | 'outgoing.markDelivered'
+  | 'outgoing.updateStatus'
+  | 'outgoing.send'
+  | 'files.read'
+  | 'files.upload'
+  | 'files.delete'
+  | 'departments.read'
+  | 'departments.create'
+  | 'departments.updateStatus'
+  | 'users.read'
+  | 'users.manage'
+  | 'roles.read'
+  | 'roles.manage'
+  | 'admin.rbac'
+  | 'rbac.manage'
+  | 'audit.read'
+  | 'dashboard.read';
 
 export const PERMISSIONS = {
   // Incoming
@@ -48,13 +61,9 @@ export const PERMISSIONS = {
   AUDIT_READ: 'audit.read',
   DASHBOARD_READ: 'dashboard.read',
 
-   RBAC_MANAGE: 'rbac.manage',
-   ADMIN_RBAC: 'rbac.manage',
-
+  RBAC_MANAGE: 'rbac.manage',
+  ADMIN_RBAC: 'rbac.manage',
 } as const;
-
-
-
 
 // // src/auth/permissions.constants.ts
 
@@ -94,4 +103,3 @@ export const PERMISSIONS = {
 
 //   AUDIT_READ: 'audit.read',
 // } as const;
-

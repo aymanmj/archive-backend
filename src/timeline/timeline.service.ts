@@ -23,7 +23,10 @@ export class TimelineService {
     actorUserId?: number;
     details?: any;
   }) {
-    const docIdNum = typeof params.docId === 'bigint' ? Number(params.docId) : Number(params.docId);
+    const docIdNum =
+      typeof params.docId === 'bigint'
+        ? Number(params.docId)
+        : Number(params.docId);
     return this.prisma.timelineEvent.create({
       data: {
         docId: BigInt(docIdNum),

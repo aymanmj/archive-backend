@@ -1,5 +1,9 @@
 // src/departments/departments.service.ts
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { CreateDepartmentDto } from './dto/create-department.dto';
 
@@ -72,12 +76,11 @@ export class DepartmentsService {
     });
     if (!d) throw new NotFoundException('Department not found');
 
-    const next: 'Active' | 'Inactive' = d.status === 'Active' ? 'Inactive' : 'Active';
+    const next: 'Active' | 'Inactive' =
+      d.status === 'Active' ? 'Inactive' : 'Active';
     return this.updateStatus(id, next);
   }
 }
-
-
 
 // // src/departments/departments.service.ts
 // import { Injectable, NotFoundException } from '@nestjs/common';
@@ -127,4 +130,3 @@ export class DepartmentsService {
 //     return this.updateStatus(id, next);
 //   }
 // }
-

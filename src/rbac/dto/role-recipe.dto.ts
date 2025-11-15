@@ -1,6 +1,12 @@
 // src/rbac/dto/role-recipe.dto.ts
 
-import { IsArray, IsOptional, IsString, MinLength, ArrayNotEmpty } from 'class-validator';
+import {
+  IsArray,
+  IsOptional,
+  IsString,
+  MinLength,
+  ArrayNotEmpty,
+} from 'class-validator';
 
 export class RoleRecipeDto {
   @IsString()

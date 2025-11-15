@@ -15,12 +15,7 @@ import { AuditModule } from 'src/audit/audit.module';
 })
 export class RbacModule {}
 
-
-
-
-
 // // src/rbac/rbac.module.ts
-
 
 // import { Module } from '@nestjs/common';
 // import { RbacService } from './rbac.service';
@@ -34,5 +29,3 @@ export class RbacModule {}
 //   exports: [RbacService],
 // })
 // export class RbacModule {}
-
-

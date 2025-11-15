@@ -13,9 +13,6 @@ export function ensureDir(dirPath: string) {
   }
 }
 
-
-
-
 // // src/common/storage.ts
 
 // import { existsSync, mkdirSync } from 'fs';
@@ -28,4 +25,3 @@ export function ensureDir(dirPath: string) {
 //     mkdirSync(dir, { recursive: true });
 //   }
 // }
-

@@ -1,6 +1,12 @@
 // src/incoming/dto/create-followup.dto.ts
 
-import { IsInt, IsOptional, IsString, MinLength, IsEnum } from 'class-validator';
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  MinLength,
+  IsEnum,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import { DistributionStatus } from '@prisma/client';
 

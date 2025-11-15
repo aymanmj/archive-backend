@@ -8,9 +8,9 @@ import { NotificationsService } from 'src/notifications/notifications.service';
 import { NotificationsGateway } from 'src/notifications/notifications.gateway';
 
 type EscalationPolicyLevel = {
-  level: number;                     // L1, L2, ...
-  afterMinutesOverdue: number;       // يبدأ التصعيد بعد كم دقيقة من التأخير
-  priorityBump: number;              // كم نرفع الأولوية
+  level: number; // L1, L2, ...
+  afterMinutesOverdue: number; // يبدأ التصعيد بعد كم دقيقة من التأخير
+  priorityBump: number; // كم نرفع الأولوية
   notifyAssignee?: boolean;
   notifyManager?: boolean;
   notifyAdmin?: boolean;
@@ -18,10 +18,38 @@ type EscalationPolicyLevel = {
 
 // مثال سياسة مبسطة:
 const POLICY: EscalationPolicyLevel[] = [
-  { level: 1, afterMinutesOverdue: 5,  priorityBump: 1, notifyAssignee: true,  notifyManager: false, notifyAdmin: false },
-  { level: 2, afterMinutesOverdue: 15, priorityBump: 1, notifyAssignee: true,  notifyManager: true,  notifyAdmin: false },
-  { level: 3, afterMinutesOverdue: 30, priorityBump: 2, notifyAssignee: true,  notifyManager: true,  notifyAdmin: true  },
-  { level: 4, afterMinutesOverdue: 60, priorityBump: 2, notifyAssignee: true,  notifyManager: true,  notifyAdmin: true  },
+  {
+    level: 1,
+    afterMinutesOverdue: 5,
+    priorityBump: 1,
+    notifyAssignee: true,
+    notifyManager: false,
+    notifyAdmin: false,
+  },
+  {
+    level: 2,
+    afterMinutesOverdue: 15,
+    priorityBump: 1,
+    notifyAssignee: true,
+    notifyManager: true,
+    notifyAdmin: false,
+  },
+  {
+    level: 3,
+    afterMinutesOverdue: 30,
+    priorityBump: 2,
+    notifyAssignee: true,
+    notifyManager: true,
+    notifyAdmin: true,
+  },
+  {
+    level: 4,
+    afterMinutesOverdue: 60,
+    priorityBump: 2,
+    notifyAssignee: true,
+    notifyManager: true,
+    notifyAdmin: true,
+  },
 ];
 
 @Injectable()
@@ -37,7 +65,9 @@ export class EscalationWorker {
   /**
    * دالة وهمية لاختيار مدير القسم
    */
-  private async pickManagerForDepartment(deptId: number): Promise<number | null> {
+  private async pickManagerForDepartment(
+    deptId: number,
+  ): Promise<number | null> {
     const mgr = await this.prisma.user.findFirst({
       where: {
         isActive: true,
@@ -73,9 +103,10 @@ export class EscalationWorker {
     if (!late.length) return;
 
     for (const d of late) {
-      const elapsedMin = Math.floor((now.getTime() - new Date(d.dueAt!).getTime()) / 60000);
-      const nextLevel = POLICY
-        .slice() // copy to be safe
+      const elapsedMin = Math.floor(
+        (now.getTime() - new Date(d.dueAt!).getTime()) / 60000,
+      );
+      const nextLevel = POLICY.slice() // copy to be safe
         .reverse()
         .find((p) => elapsedMin >= p.afterMinutesOverdue);
 
@@ -84,7 +115,10 @@ export class EscalationWorker {
 
       await this.prisma.$transaction(async (tx) => {
         // حدّث الأولوية والتصعيد
-        const newPriority = Math.max(0, (d.priority ?? 0) + nextLevel.priorityBump);
+        const newPriority = Math.max(
+          0,
+          (d.priority ?? 0) + nextLevel.priorityBump,
+        );
         const newEscCount = (d.escalationCount ?? 0) + 1;
 
         await tx.incomingDistribution.update({
@@ -112,7 +146,8 @@ export class EscalationWorker {
         // =========================================
         const recipients: number[] = [];
 
-        if (nextLevel.notifyAssignee && d.assignedToUserId) recipients.push(d.assignedToUserId);
+        if (nextLevel.notifyAssignee && d.assignedToUserId)
+          recipients.push(d.assignedToUserId);
 
         if (nextLevel.notifyManager) {
           const mgr = await this.pickManagerForDepartment(d.targetDepartmentId);
@@ -121,10 +156,13 @@ export class EscalationWorker {
 
         if (nextLevel.notifyAdmin) {
           const admins = await tx.user.findMany({
-            where: { isActive: true, UserRole: { some: { Role: { roleName: 'ADMIN' } } } },
+            where: {
+              isActive: true,
+              UserRole: { some: { Role: { roleName: 'ADMIN' } } },
+            },
             select: { id: true },
           });
-          recipients.push(...admins.map(a => a.id));
+          recipients.push(...admins.map((a) => a.id));
         }
 
         const uniqRecipients = [...new Set(recipients)];
@@ -142,13 +180,18 @@ export class EscalationWorker {
           });
 
           this.notiGw.emitToUsers(uniqRecipients, 'notify', {
-            title, body, link, severity: nextLevel.level >= 2 ? 'danger' : 'warning',
+            title,
+            body,
+            link,
+            severity: nextLevel.level >= 2 ? 'danger' : 'warning',
             at: new Date().toISOString(),
           });
         }
       });
     }
 
-    this.logger.log(`Escalation tick processed ${late.length} overdue distributions`);
+    this.logger.log(
+      `Escalation tick processed ${late.length} overdue distributions`,
+    );
   }
 }

@@ -1,6 +1,10 @@
 // src/outgoing/outgoing.service.ts
 
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { DeliveryMethod } from '@prisma/client';
@@ -12,7 +16,7 @@ type PageParams = {
   pageSize: number;
   q?: string;
   from?: string; // YYYY-MM-DD
-  to?: string;   // YYYY-MM-DD
+  to?: string; // YYYY-MM-DD
 };
 
 type AuditMeta = {
@@ -53,7 +57,10 @@ export class OutgoingService {
   }
 
   /** رقم صادر سنوي آمن عبر NumberSequence */
-  private async generateOutgoingNumber(tx: Prisma.TransactionClient, year: number) {
+  private async generateOutgoingNumber(
+    tx: Prisma.TransactionClient,
+    year: number,
+  ) {
     const scope = `OUTGOING_${year}`;
     const seqRow = await tx.numberSequence.upsert({
       where: { scope },
@@ -88,7 +95,7 @@ export class OutgoingService {
       this.prisma.outgoingRecord.count(),
     ]);
 
-    const docIds = items.map((r) => r.Document?.id).filter(Boolean) as bigint[];
+    const docIds = items.map((r) => r.Document?.id).filter(Boolean);
     let docIdWithFiles = new Set<bigint>();
     if (docIds.length > 0) {
       const fileGroups = await this.prisma.documentFile.groupBy({
@@ -103,8 +110,12 @@ export class OutgoingService {
       outgoingNumber: r.outgoingNumber,
       issueDate: r.issueDate,
       externalPartyName: r.ExternalParty?.name ?? '—',
-      document: r.Document ? { id: String(r.Document.id), title: r.Document.title } : null,
-      hasFiles: r.Document?.id ? docIdWithFiles.has(r.Document.id as any) : false,
+      document: r.Document
+        ? { id: String(r.Document.id), title: r.Document.title }
+        : null,
+      hasFiles: r.Document?.id
+        ? docIdWithFiles.has(r.Document.id as any)
+        : false,
     }));
 
     return {
@@ -130,7 +141,9 @@ export class OutgoingService {
         }
       : {};
 
-    const where: Prisma.OutgoingRecordWhereInput = { AND: [dateWhere, textWhere] };
+    const where: Prisma.OutgoingRecordWhereInput = {
+      AND: [dateWhere, textWhere],
+    };
 
     const [items, total] = await this.prisma.$transaction([
       this.prisma.outgoingRecord.findMany({
@@ -149,7 +162,7 @@ export class OutgoingService {
       this.prisma.outgoingRecord.count({ where }),
     ]);
 
-    const docIds = items.map((r) => r.Document?.id).filter(Boolean) as bigint[];
+    const docIds = items.map((r) => r.Document?.id).filter(Boolean);
     let docIdWithFiles = new Set<bigint>();
     if (docIds.length > 0) {
       const fileGroups = await this.prisma.documentFile.groupBy({
@@ -164,8 +177,12 @@ export class OutgoingService {
       outgoingNumber: r.outgoingNumber,
       issueDate: r.issueDate,
       externalPartyName: r.ExternalParty?.name ?? '—',
-      document: r.Document ? { id: String(r.Document.id), title: r.Document.title } : null,
-      hasFiles: r.Document?.id ? docIdWithFiles.has(r.Document.id as any) : false,
+      document: r.Document
+        ? { id: String(r.Document.id), title: r.Document.title }
+        : null,
+      hasFiles: r.Document?.id
+        ? docIdWithFiles.has(r.Document.id as any)
+        : false,
     }));
 
     return {
@@ -193,9 +210,15 @@ export class OutgoingService {
     const monthEnd = todayEnd;
 
     const [today, last7, thisMonth, total] = await this.prisma.$transaction([
-      this.prisma.outgoingRecord.count({ where: { issueDate: { gte: todayStart, lte: todayEnd } } }),
-      this.prisma.outgoingRecord.count({ where: { issueDate: { gte: weekStart, lte: todayEnd } } }),
-      this.prisma.outgoingRecord.count({ where: { issueDate: { gte: monthStart, lte: monthEnd } } }),
+      this.prisma.outgoingRecord.count({
+        where: { issueDate: { gte: todayStart, lte: todayEnd } },
+      }),
+      this.prisma.outgoingRecord.count({
+        where: { issueDate: { gte: weekStart, lte: todayEnd } },
+      }),
+      this.prisma.outgoingRecord.count({
+        where: { issueDate: { gte: monthStart, lte: monthEnd } },
+      }),
       this.prisma.outgoingRecord.count(),
     ]);
 
@@ -311,7 +334,10 @@ export class OutgoingService {
     const title = String(payload.documentTitle || '').trim();
     if (!title) throw new BadRequestException('Invalid documentTitle');
 
-    if (!payload.owningDepartmentId || isNaN(Number(payload.owningDepartmentId))) {
+    if (
+      !payload.owningDepartmentId ||
+      isNaN(Number(payload.owningDepartmentId))
+    ) {
       throw new BadRequestException('Invalid owningDepartmentId');
     }
 
@@ -345,8 +371,12 @@ export class OutgoingService {
           currentStatus: 'Registered',
           documentType: { connect: { id: 1 } },
           securityLevel: { connect: { id: 1 } },
-          createdByUser: { connect: { id: Number(user?.id ?? payload.signedByUserId) } },
-          owningDepartment: { connect: { id: Number(payload.owningDepartmentId) } },
+          createdByUser: {
+            connect: { id: Number(user?.id ?? payload.signedByUserId) },
+          },
+          owningDepartment: {
+            connect: { id: Number(payload.owningDepartmentId) },
+          },
         },
         select: { id: true, title: true },
       });
@@ -387,7 +417,6 @@ export class OutgoingService {
         },
       });
 
-
       return {
         id: String(outgoing.id),
         outgoingNumber: outgoing.outgoingNumber,
@@ -401,7 +430,12 @@ export class OutgoingService {
     });
   }
 
-  async markDelivered(id: string | number, delivered: boolean, proofPath?: string | null, meta?: AuditMeta) {
+  async markDelivered(
+    id: string | number,
+    delivered: boolean,
+    proofPath?: string | null,
+    meta?: AuditMeta,
+  ) {
     const outId = BigInt(id as any);
 
     // const exists = await this.prisma.outgoingRecord.findUnique({
@@ -443,11 +477,10 @@ export class OutgoingService {
       },
     });
 
-
     // ✅ سجل تدقيقي
     await this.prisma.auditTrail.create({
       data: {
-        documentId: updated.documentId!,
+        documentId: updated.documentId,
         userId: undefined, // سيُملأ من الـController عند الحاجة
         actionType: 'DELIVERY_STATUS',
         actionDescription: updated.isDelivered
@@ -475,20 +508,19 @@ export class OutgoingService {
       ORDER BY 1;
     `;
     const map = new Map<string, number>();
-    rows.forEach(r => map.set(new Date(r.d).toISOString().slice(0,10), Number(r.c)));
+    rows.forEach((r) =>
+      map.set(new Date(r.d).toISOString().slice(0, 10), Number(r.c)),
+    );
     const out: { date: string; count: number }[] = [];
     for (let i = n - 1; i >= 0; i--) {
-      const d = new Date(); d.setDate(d.getDate() - i);
-      const key = d.toISOString().slice(0,10);
+      const d = new Date();
+      d.setDate(d.getDate() - i);
+      const key = d.toISOString().slice(0, 10);
       out.push({ date: key, count: map.get(key) ?? 0 });
     }
     return { days: n, series: out };
   }
 }
-
-
-
-
 
 // import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 // import { Prisma } from '@prisma/client';
@@ -904,7 +936,6 @@ export class OutgoingService {
 //     };
 //   }
 
-
 //   async dailySeries(days = 30) {
 //     const n = Math.max(1, Math.min(365, Number(days) || 30));
 //     const rows: Array<{ d: Date; c: bigint }> = await this.prisma.$queryRaw`
@@ -926,4 +957,3 @@ export class OutgoingService {
 //   }
 
 // }
-
