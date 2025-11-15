@@ -33,6 +33,67 @@ export class AuthController {
   ) {}
 
   // ====== Auth ======
+  // @Public()
+  // @Post('login')
+  // @HttpCode(200)
+  // async login(@Req() req: any, @Body() body: LoginDto) {
+  //   const username = String(body?.username ?? '')
+  //     .trim()
+  //     .toLowerCase();
+  //   const ip = getClientIp(req);
+
+  //   // تحقق من الحظر الحالي
+  //   // const lockTtl = await this.throttle.isLocked(ip, username);
+  //   // if (lockTtl > 0) {
+  //   //   throw new UnauthorizedException(
+  //   //     `تم حظر تسجيل الدخول مؤقتًا. حاول بعد ${lockTtl} ثانية.`,
+  //   //   );
+  //   // }
+
+  //   const lockTtl = await this.throttle.isLocked(ip, username);
+  //   if (lockTtl > 0) {
+  //     throw new UnauthorizedException({
+  //       code: 'LOCKED_UNTIL',
+  //       message: 'تم حظر تسجيل الدخول مؤقتًا بسبب عدد كبير من المحاولات.',
+  //       retryAfterSec: lockTtl,
+  //     });
+  //   }
+
+  //   try {
+  //     const result = await this.authService.login(body.username, body.password);
+  //     // نجاح → صفّر العداد
+  //     await this.throttle.onSuccess(ip, username);
+  //     return result;
+  //   } catch (err) {
+  //     // فشل → زدّ المحاولات وقد تفعّل الحظر
+  //     // const f = await this.throttle.onFailure(ip, username);
+  //     // if (f.locked) {
+  //     //   throw new UnauthorizedException(
+  //     //     `تم تجاوز عدد المحاولات. تم الحظر لمدة ${f.ttl} ثانية.`,
+  //     //   );
+  //     // }
+  //     // throw new UnauthorizedException(
+  //     //   `بيانات الدخول غير صحيحة. متبقّي محاولات: ${f.remaining} خلال ${f.ttl} ثانية.`,
+  //     // );
+
+  //     const f = await this.throttle.onFailure(ip, username);
+  //     if (f.locked) {
+  //       throw new UnauthorizedException({
+  //         code: 'LOCKED_AFTER_FAILURE',
+  //         message: `تم تجاوز عدد المحاولات. تم الحظر لمدة ${f.ttl} ثانية.`,
+  //         retryAfterSec: f.ttl,
+  //       });
+  //     }
+
+  //     throw new UnauthorizedException({
+  //       code: 'INVALID_CREDENTIALS',
+  //       message: 'بيانات الدخول غير صحيحة.',
+  //       remaining: f.remaining,
+  //       retryAfterSec: f.ttl,
+  //     });
+  //   }
+  // }
+
   @Public()
   @Post('login')
   @HttpCode(200)
@@ -42,14 +103,7 @@ export class AuthController {
       .toLowerCase();
     const ip = getClientIp(req);
 
-    // تحقق من الحظر الحالي
-    // const lockTtl = await this.throttle.isLocked(ip, username);
-    // if (lockTtl > 0) {
-    //   throw new UnauthorizedException(
-    //     `تم حظر تسجيل الدخول مؤقتًا. حاول بعد ${lockTtl} ثانية.`,
-    //   );
-    // }
-
+    // تحقق من الحظر الحالي على مستوى IP + username
     const lockTtl = await this.throttle.isLocked(ip, username);
     if (lockTtl > 0) {
       throw new UnauthorizedException({
@@ -60,22 +114,20 @@ export class AuthController {
     }
 
     try {
-      const result = await this.authService.login(body.username, body.password);
-      // نجاح → صفّر العداد
+      // نمرر username الموحّد + ip إلى الـ service
+      const result = await this.authService.login(username, body.password, ip);
+      // نجاح → صفّر العداد في الـ throttle
       await this.throttle.onSuccess(ip, username);
       return result;
-    } catch (err) {
-      // فشل → زدّ المحاولات وقد تفعّل الحظر
-      // const f = await this.throttle.onFailure(ip, username);
-      // if (f.locked) {
-      //   throw new UnauthorizedException(
-      //     `تم تجاوز عدد المحاولات. تم الحظر لمدة ${f.ttl} ثانية.`,
-      //   );
-      // }
-      // throw new UnauthorizedException(
-      //   `بيانات الدخول غير صحيحة. متبقّي محاولات: ${f.remaining} خلال ${f.ttl} ثانية.`,
-      // );
+    } catch (err: any) {
+      const resp = err?.response as any;
 
+      // لو الحساب مقفول من الـ DB نعيد نفس الاستثناء بدون اللعب بالرسالة
+      if (resp && resp.code === 'ACCOUNT_LOCKED') {
+        throw err;
+      }
+
+      // فشل عادي → نطبق منطق throttle
       const f = await this.throttle.onFailure(ip, username);
       if (f.locked) {
         throw new UnauthorizedException({
@@ -136,6 +188,37 @@ export class AuthController {
     return this.authService.completePasswordReset(dto.token, dto.newPassword);
   }
 
+  // ====== فك حظر تسجيل الدخول لمستخدم (يتطلب USERS_MANAGE) ======
+  // @UseGuards(JwtAuthGuard)
+  // @RequirePermissions([PERMISSIONS.USERS_MANAGE])
+  // @Post('unlock-login')
+  // async unlockLogin(@Req() req: any, @Body('userId') userIdRaw: any) {
+  //   const adminId = Number(req?.user?.sub) || undefined;
+  //   const userId = Number(userIdRaw);
+
+  //   if (!userId || Number.isNaN(userId)) {
+  //     throw new BadRequestException('userId غير صالح');
+  //   }
+
+  //   await this.authService.adminUnlockUserLogin(userId, adminId);
+  //   return { ok: true };
+  // }
+
+  @UseGuards(JwtAuthGuard)
+  @RequirePermissions([PERMISSIONS.USERS_MANAGE])
+  @Post('unlock-login')
+  async unlockLogin(@Req() req: any, @Body('userId') userIdRaw: any) {
+    const adminId = Number(req?.user?.sub) || undefined;
+    const userId = Number(userIdRaw);
+
+    if (!userId || Number.isNaN(userId)) {
+      throw new BadRequestException('userId غير صالح');
+    }
+
+    const result = await this.authService.adminUnlockUserLogin(userId, adminId);
+    return result;
+  }
+
   // ====== Permissions ======
   @UseGuards(JwtAuthGuard)
   @Get('permissions')
@@ -168,6 +251,8 @@ export class AuthController {
     return { ok: true };
   }
 }
+
+
 
 // // src/auth/auth.controller.ts
 
