@@ -13,15 +13,15 @@ import { JwtAuthGuard } from 'src/auth/jwt-auth.guard';
 @UseGuards(JwtAuthGuard)
 @Controller('timeline')
 export class TimelineController {
-  constructor(private timeline: TimelineService) {}
+  constructor(private readonly timeline: TimelineService) {}
 
   @Get('incoming/:id')
-  async incomingTimeline(@Param('id', ParseIntPipe) id: number) {
-    return this.timeline.list('INCOMING', id);
+  async incoming(@Param('id', ParseIntPipe) id: number) {
+    return this.timeline.getIncomingTimeline(id);
   }
 
   @Get('outgoing/:id')
-  async outgoingTimeline(@Param('id', ParseIntPipe) id: number) {
-    return this.timeline.list('OUTGOING', id);
+  async outgoing(@Param('id', ParseIntPipe) id: number) {
+    return this.timeline.getOutgoingTimeline(id);
   }
 }

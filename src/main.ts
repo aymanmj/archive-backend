@@ -75,38 +75,88 @@ async function bootstrap() {
   app.use(compression());
 
   // ✅ CORS مضبوط من ENV (وفي التطوير نسمح للمنافذ المعتادة)
-  const envAllowed = (process.env.CORS_ORIGINS ?? '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
+  // const envAllowed = (process.env.CORS_ORIGINS ?? '')
+  //   .split(',')
+  //   .map((s) => s.trim())
+  //   .filter(Boolean);
 
-  const devFallback =
-    process.env.NODE_ENV !== 'production'
-      ? ['http://localhost:5173', 'http://localhost:8080']
-      : [];
+  // const devFallback =
+  //   process.env.NODE_ENV !== 'production'
+  //     ? ['http://localhost:5173', 'http://localhost:8080', 'http://127.0.0.1:5173',]
+  //     : [];
 
-  const allowedOrigins = envAllowed.length > 0 ? envAllowed : devFallback;
+  // const allowedOrigins = envAllowed.length > 0 ? envAllowed : devFallback;
 
-  app.enableCors({
-    origin: (origin, cb) => {
-      if (!origin) return cb(null, true); // يسمح للـ curl/اختبارات بلا Origin
-      if (allowedOrigins.length === 0) return cb(null, true);
-      if (allowedOrigins.includes(origin)) return cb(null, true);
-      cb(new Error(`Not allowed by CORS: ${origin}`));
-    },
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: [
-      'Content-Type',
-      'Authorization',
-      'X-Requested-With',
-      'X-Workstation',
-      'X-Client-Timezone',
-      'X-Forwarded-For',
-      'X-Real-IP',
-    ],
-    exposedHeaders: ['Content-Type', 'Content-Length'],
-  });
+  // app.enableCors({
+  //   origin: (origin, cb) => {
+  //     if (!origin) return cb(null, true); // يسمح للـ curl/اختبارات بلا Origin
+  //     if (allowedOrigins.length === 0) return cb(null, true);
+  //     if (allowedOrigins.includes(origin)) return cb(null, true);
+  //     cb(new Error(`Not allowed by CORS: ${origin}`));
+  //   },
+  //   credentials: true,
+  //   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  //   allowedHeaders: [
+  //     'Content-Type',
+  //     'Authorization',
+  //     'X-Requested-With',
+  //     'X-Workstation',
+  //     'X-Client-Timezone',
+  //     'X-Forwarded-For',
+  //     'X-Real-IP',
+  //   ],
+  //   exposedHeaders: ['Content-Type', 'Content-Length'],
+  // });
+
+
+  // ✅ CORS
+  const isDev = process.env.NODE_ENV !== 'production';
+
+  if (isDev) {
+    // في التطوير: سهّل الحياة واسمح لكل origins من المتصفح
+    app.enableCors({
+      origin: true, // <== أي origin
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      allowedHeaders: [
+        'Content-Type',
+        'Authorization',
+        'X-Requested-With',
+        'X-Workstation',
+        'X-Client-Timezone',
+        'X-Forwarded-For',
+        'X-Real-IP',
+      ],
+      exposedHeaders: ['Content-Type', 'Content-Length'],
+    });
+  } else {
+    // الإنتاج: التقييد من خلال CORS_ORIGINS
+    const envAllowed = (process.env.CORS_ORIGINS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean);
+
+    app.enableCors({
+      origin: (origin, cb) => {
+        if (!origin) return cb(null, true);
+        if (envAllowed.length === 0) return cb(null, true);
+        if (envAllowed.includes(origin)) return cb(null, true);
+        cb(new Error(`Not allowed by CORS: ${origin}`));
+      },
+      credentials: true,
+      methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+      allowedHeaders: [
+        'Content-Type',
+        'Authorization',
+        'X-Requested-With',
+        'X-Workstation',
+        'X-Client-Timezone',
+        'X-Forwarded-For',
+        'X-Real-IP',
+      ],
+      exposedHeaders: ['Content-Type', 'Content-Length'],
+    });
+  }
 
   // ✅ حدود الجسم
   app.use(json({ limit: '50mb' }));
@@ -186,6 +236,7 @@ console.log('DATABASE_URL =>', process.env.DATABASE_URL);
     setTimeout(() => process.exit(1), 120000);
   }
 })();
+
 
 // // src/main.ts
 
