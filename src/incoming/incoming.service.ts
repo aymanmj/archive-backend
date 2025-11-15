@@ -186,123 +186,6 @@ export class IncomingService {
     }));
   }
 
-  // async myDesk(
-  //   user: any,
-  //   params: PageParams & {
-  //     deptId?: string;
-  //     assigneeId?: string;
-  //     incomingNumber?: string;
-  //     distributionId?: string;
-  //     scope?: 'overdue' | 'today' | 'week';
-  //   }
-  // ) {
-  //   const { page, pageSize, q, from, to, scope } = params;
-  //   const skip = (page - 1) * pageSize;
-
-  //   let effectiveDeptId = user?.departmentId ?? null;
-  //   if (!effectiveDeptId && user?.id) {
-  //     const u = await this.prisma.user.findUnique({
-  //       where: { id: Number(user.id) },
-  //       select: { departmentId: true },
-  //     });
-  //     effectiveDeptId = u?.departmentId ?? null;
-  //   }
-
-  //   const filterDeptId      = params.deptId      ? Number(params.deptId)      : undefined;
-  //   const filterAssigneeId  = params.assigneeId  ? Number(params.assigneeId)  : undefined;
-  //   const filterDistId      = params.distributionId ? BigInt(params.distributionId as any) : undefined;
-  //   const filterIncomingNum = params.incomingNumber?.trim();
-
-  //   const dateWhere = this.buildDateRange(from, to);
-  //   const textWhere: Prisma.IncomingRecordWhereInput = q
-  //     ? { OR: [
-  //         { incomingNumber: this.likeInsensitive(q) },
-  //         { document: { title: this.likeInsensitive(q) } },
-  //         { externalParty: { name: this.likeInsensitive(q) } },
-  //       ] }
-  //     : {};
-
-  //   const myDeskOr: Prisma.IncomingDistributionWhereInput[] = [];
-  //   if (user?.id)        myDeskOr.push({ assignedToUserId: Number(user.id) });
-  //   if (effectiveDeptId) myDeskOr.push({ targetDepartmentId: Number(effectiveDeptId) });
-
-  //   const now = new Date();
-  //   let scopeDue: Prisma.DateTimeFilter | undefined;
-  //   if (scope === 'overdue') scopeDue = { lt: now };
-  //   else if (scope === 'today') {
-  //     const start = new Date(now); start.setHours(0,0,0,0);
-  //     const end   = new Date(now); end.setHours(23,59,59,999);
-  //     scopeDue = { gte: start, lte: end };
-  //   } else if (scope === 'week') {
-  //     const day = now.getDay();
-  //     const diffToMonday = (day + 6) % 7;
-  //     const start = new Date(now); start.setDate(now.getDate() - diffToMonday); start.setHours(0,0,0,0);
-  //     const end   = new Date(start); end.setDate(start.getDate() + 7); end.setMilliseconds(-1);
-  //     scopeDue = { gte: start, lte: end };
-  //   }
-
-  //   const whereDist: Prisma.IncomingDistributionWhereInput = {
-  //     ...(myDeskOr.length ? { OR: myDeskOr } : {}),
-  //     incoming: { AND: [dateWhere, textWhere] },
-  //     status: { in: ['Open','InProgress'] as any },
-  //     ...(scopeDue ? { dueAt: scopeDue } : {}),
-  //   };
-
-  //   if (typeof filterDeptId === 'number' && !isNaN(filterDeptId)) whereDist.targetDepartmentId = filterDeptId;
-  //   if (typeof filterAssigneeId === 'number' && !isNaN(filterAssigneeId)) whereDist.assignedToUserId = filterAssigneeId;
-  //   if (filterIncomingNum) {
-  //     whereDist.incoming = {
-  //       ...(whereDist.incoming ?? {}),
-  //       incomingNumber: { equals: filterIncomingNum },
-  //     } as any;
-  //   }
-  //   if (typeof filterDistId === 'bigint') whereDist.id = filterDistId;
-
-  //   const [items, total] = await this.prisma.$transaction([
-  //     this.prisma.incomingDistribution.findMany({
-  //       where: whereDist,
-  //       select: {
-  //         id: true, status: true, lastUpdateAt: true,
-  //         incomingId: true, assignedToUserId: true, targetDepartmentId: true,
-  //         // SLA
-  //         dueAt: true, priority: true, escalationCount: true,
-  //         incoming: {
-  //           select: {
-  //             id: true, incomingNumber: true, receivedDate: true,
-  //             externalParty: { select: { name: true } },
-  //             document: { select: { id: true, title: true } },
-  //           },
-  //         },
-  //       },
-  //       orderBy: [{ priority: 'desc' }, { dueAt: 'asc' }, { lastUpdateAt: 'desc' }],
-  //       skip, take: pageSize,
-  //     }),
-  //     this.prisma.incomingDistribution.count({ where: whereDist }),
-  //   ]);
-
-  //   const rows = items.map((d) => ({
-  //     id: String(d.id),
-  //     distributionId: String(d.id),
-  //     status: d.status,
-  //     lastUpdateAt: d.lastUpdateAt,
-  //     incomingId: String(d.incomingId),
-  //     incomingNumber: d.incoming?.incomingNumber,
-  //     receivedDate: d.incoming?.receivedDate,
-  //     externalPartyName: d.incoming?.externalParty?.name ?? '—',
-  //     document: d.incoming?.document || null,
-  //     // SLA
-  //     dueAt: d.dueAt ?? null,
-  //     priority: d.priority ?? 0,
-  //     escalationCount: d.escalationCount ?? 0,
-  //   }));
-
-  //   return {
-  //     page, pageSize, total,
-  //     pages: Math.max(1, Math.ceil(total / pageSize)),
-  //     rows,
-  //   };
-  // }
-
   async myDesk(
     user: any,
     params: PageParams & {
@@ -446,6 +329,22 @@ export class IncomingService {
       this.prisma.incomingDistribution.count({ where: whereDist }),
     ]);
 
+    // const rows = items.map((d) => ({
+    //   id: String(d.id),
+    //   distributionId: String(d.id),
+    //   status: d.status,
+    //   lastUpdateAt: d.lastUpdateAt,
+    //   incomingId: String(d.incomingId),
+    //   incomingNumber: d.incoming?.incomingNumber,
+    //   receivedDate: d.incoming?.receivedDate,
+    //   externalPartyName: d.incoming?.externalParty?.name ?? '—',
+    //   document: d.incoming?.document || null,
+    //   // SLA
+    //   dueAt: d.dueAt ?? null,
+    //   priority: d.priority ?? 0,
+    //   escalationCount: d.escalationCount ?? 0,
+    // }));
+
     const rows = items.map((d) => ({
       id: String(d.id),
       distributionId: String(d.id),
@@ -456,10 +355,16 @@ export class IncomingService {
       receivedDate: d.incoming?.receivedDate,
       externalPartyName: d.incoming?.externalParty?.name ?? '—',
       document: d.incoming?.document || null,
-      // SLA
+      // SLA raw fields
       dueAt: d.dueAt ?? null,
       priority: d.priority ?? 0,
       escalationCount: d.escalationCount ?? 0,
+      // 👇 معلومات SLA محسوبة جاهزة للواجهة
+      sla: computeSlaInfo({
+        dueAt: d.dueAt,
+        status: d.status as any,
+        escalationCount: d.escalationCount ?? 0,
+      }),
     }));
 
     return {
@@ -724,6 +629,18 @@ export class IncomingService {
         uploadedAt: f.uploadedAt,
         versionNumber: f.versionNumber,
       })),
+      // distributions: incoming.distributions.map((d) => ({
+      //   id: String(d.id),
+      //   status: d.status,
+      //   targetDepartmentName: d.targetDepartment?.name ?? '—',
+      //   assignedToUserName: d.assignedToUser?.fullName ?? null,
+      //   lastUpdateAt: d.lastUpdateAt,
+      //   notes: d.notes ?? null,
+      //   // SLA
+      //   dueAt: d.dueAt ?? null,
+      //   priority: d.priority ?? 0,
+      //   escalationCount: d.escalationCount ?? 0,
+      // })),
       distributions: incoming.distributions.map((d) => ({
         id: String(d.id),
         status: d.status,
@@ -731,10 +648,16 @@ export class IncomingService {
         assignedToUserName: d.assignedToUser?.fullName ?? null,
         lastUpdateAt: d.lastUpdateAt,
         notes: d.notes ?? null,
-        // SLA
+        // SLA raw fields
         dueAt: d.dueAt ?? null,
         priority: d.priority ?? 0,
         escalationCount: d.escalationCount ?? 0,
+        // 👇 معلومات SLA جاهزة
+        sla: computeSlaInfo({
+          dueAt: d.dueAt,
+          status: d.status as any,
+          escalationCount: d.escalationCount ?? 0,
+        }),
       })),
     };
   }
@@ -1351,6 +1274,8 @@ export class IncomingService {
     return { open, inProgress: prog, closed };
   }
 }
+
+
 
 // // src/incoming/incoming.service.ts
 
