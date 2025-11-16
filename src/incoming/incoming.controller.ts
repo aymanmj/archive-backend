@@ -278,6 +278,15 @@ export class IncomingController {
   async myDeskStatus(@Req() req: any) {
     return this.incomingService.myDeskStatus(req.user);
   }
+
+  @RequirePermissions(PERMISSIONS.INCOMING_READ)
+  @Get('stats/sla-by-department')
+  async slaByDepartment(
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.incomingService.slaReportByDepartment({ from, to });
+  }
 }
 
 

@@ -23,6 +23,17 @@ type AuditMeta = {
   workstation?: string | null;
 };
 
+type SlaDeptRow = {
+  departmentId: number | null;
+  departmentName: string;
+  total: number;
+  noSla: number;
+  onTrack: number;
+  dueSoon: number;
+  overdue: number;
+  escalated: number;
+};
+
 // ====== تعريب عناوين الأحداث ======
 const AR_ACTIONS: Record<string, string> = {
   // وارد/توزيع
@@ -266,7 +277,7 @@ export class IncomingService {
       incoming: { AND: [dateWhere, textWhere] },
       // 👈 في الوضع الطبيعي: نعرض Open + InProgress + Escalated
       status: { in: ['Open', 'InProgress', 'Escalated'] as any },
-      ...(scopeDue ? { dueAt: scopeDue } : {}),
+    ...(scopeDue ? { dueAt: scopeDue } : {}),
     };
 
     // فلاتر إضافية
@@ -1118,7 +1129,7 @@ export class IncomingService {
     const { userId } = extractUserContext(user);
 
     return this.prisma.$transaction(async (tx) => {
-      const dist = await tx.incomingDistribution.findUnique({
+      const dist = await this.prisma.incomingDistribution.findUnique({
         where: { id: distId },
         select: { id: true, incoming: { select: { documentId: true } } },
       });
@@ -1171,7 +1182,7 @@ export class IncomingService {
     const { userId } = extractUserContext(user);
 
     return this.prisma.$transaction(async (tx) => {
-      const dist = await tx.incomingDistribution.findUnique({
+      const dist = await this.prisma.incomingDistribution.findUnique({
         where: { id: distId },
         select: { id: true, incoming: { select: { documentId: true } } },
       });
@@ -1311,6 +1322,92 @@ export class IncomingService {
     }
 
     return summary;
+  }
+
+  // =========================
+  // SLA Reports (by department)
+  // =========================
+
+  async slaReportByDepartment(range?: { from?: string; to?: string }) {
+    const dateWhere = this.buildDateRange(range?.from, range?.to);
+
+    const dists = await this.prisma.incomingDistribution.findMany({
+      where: {
+        status: { in: ['Open', 'InProgress', 'Escalated'] as any },
+        incoming: {
+          AND: [dateWhere],
+        },
+      },
+      select: {
+        dueAt: true,
+        status: true,
+        escalationCount: true,
+        targetDepartment: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    const map = new Map<number | '__none__', SlaDeptRow>();
+
+    for (const r of dists) {
+      const key = r.targetDepartment?.id ?? '__none__';
+      let bucket = map.get(key);
+
+      if (!bucket) {
+        bucket = {
+          departmentId: r.targetDepartment?.id ?? null,
+          departmentName: r.targetDepartment?.name ?? 'غير مخصّص',
+          total: 0,
+          noSla: 0,
+          onTrack: 0,
+          dueSoon: 0,
+          overdue: 0,
+          escalated: 0,
+        };
+        map.set(key, bucket);
+      }
+
+      bucket.total++;
+
+      const info = computeSlaInfo({
+        dueAt: r.dueAt,
+        status: r.status as any,
+        escalationCount: r.escalationCount ?? 0,
+      });
+
+      switch (info.status) {
+        case 'NoSla':
+          bucket.noSla++;
+          break;
+        case 'OnTrack':
+          bucket.onTrack++;
+          break;
+        case 'DueSoon':
+          bucket.dueSoon++;
+          break;
+        case 'Overdue':
+          bucket.overdue++;
+          break;
+      }
+
+      if (info.isEscalated) {
+        bucket.escalated++;
+      }
+    }
+
+    const departments = Array.from(map.values()).sort((a, b) =>
+      a.departmentName.localeCompare(b.departmentName, 'ar'),
+    );
+
+    return {
+      generatedAt: new Date(),
+      totalItems: dists.length,
+      departments,
+    };
   }
 }
 
