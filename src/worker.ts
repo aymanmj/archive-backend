@@ -1,409 +1,466 @@
-// SLA Worker with notifications (DB + WebSocket)
-// ---------------------------------------------
 // src/worker.ts
 
-import 'dotenv/config';
-import { PrismaClient, DistributionStatus } from '@prisma/client';
-import cron from 'node-cron';
-import { io, Socket } from 'socket.io-client';
+import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
-// جدولة
-const CRON_EXPR: string | undefined =
-  process.env.SLA_SCAN_INTERVAL_CRON?.trim() || undefined;
-const EVERY_MS_ENV = process.env.SLA_SCAN_EVERY_MS?.trim();
-const EVERY_MS: number | undefined =
-  EVERY_MS_ENV && !Number.isNaN(Number(EVERY_MS_ENV))
-    ? Number(EVERY_MS_ENV)
-    : undefined;
+// الفترة بين كل فحص وفحص (بالمللي ثانية)
+const INTERVAL_MS = Number(process.env.SLA_SCAN_EVERY_MS || '300000');
 
-// تذكير قبل الاستحقاق (دقائق)
-const REMINDER_MIN_BEFORE: number =
-  process.env.SLA_REMINDER_MINUTES_BEFORE &&
-  !Number.isNaN(Number(process.env.SLA_REMINDER_MINUTES_BEFORE))
-    ? Number(process.env.SLA_REMINDER_MINUTES_BEFORE)
-    : 30;
-
-// Socket.IO (يبث للـ Gateway)
-const NOTI_WS_URL =
-  (process.env.NOTI_WS_URL || '').trim() ||
-  'http://localhost:3000/notifications';
-let ws: Socket | null = null;
-
-function ensureWS() {
-  if (ws) return ws;
-  ws = io(NOTI_WS_URL, {
-    path: '/socket.io',
-    transports: ['websocket'],
-    // اختياري: مرر مفتاح داخلي للتحقق البسيط لو أردت
-    // auth: { key: process.env.WORKER_WS_KEY || '' },
-  });
-  ws.on('connect', () => {
-    console.log('[worker] WS connected to', NOTI_WS_URL);
-  });
-  ws.on('disconnect', () => {
-    console.log('[worker] WS disconnected');
-  });
-  return ws;
-}
-
-// سياسة تصعيد بسيطة
-type EscLevel = {
-  level: number;
-  afterMinutesOverdue: number;
-  priorityBump: number;
-  notifyAssignee?: boolean;
-  notifyManager?: boolean;
-  notifyAdmin?: boolean;
+/**
+ * إعدادات مستويات التصعيد القادمة من جدول SlaSettings
+ */
+type SlaConfig = {
+  escalateL1Minutes: number;
+  escalateL2Minutes: number;
+  escalateL3Minutes: number;
+  escalateL4Minutes: number;
 };
-const POLICY: EscLevel[] = [
-  { level: 1, afterMinutesOverdue: 5, priorityBump: 1, notifyAssignee: true },
-  {
-    level: 2,
-    afterMinutesOverdue: 15,
-    priorityBump: 1,
-    notifyAssignee: true,
-    notifyManager: true,
-  },
-  {
-    level: 3,
-    afterMinutesOverdue: 30,
-    priorityBump: 2,
-    notifyAssignee: true,
-    notifyManager: true,
-    notifyAdmin: true,
-  },
-  {
-    level: 4,
-    afterMinutesOverdue: 60,
-    priorityBump: 2,
-    notifyAssignee: true,
-    notifyManager: true,
-    notifyAdmin: true,
-  },
-];
 
-// اختيار مدير القسم (بسيطة: أي مستخدم Active بدور ADMIN في نفس القسم)
-async function pickManagerForDepartment(
-  deptId: number,
-): Promise<number | null> {
-  const mgr = await prisma.user.findFirst({
-    where: {
-      isActive: true,
-      departmentId: deptId,
-      UserRole: { some: { Role: { roleName: 'ADMIN' } } },
-    },
-    select: { id: true },
-  });
-  return mgr?.id ?? null;
-}
-
-async function notifyUsers(
-  userIds: number[],
-  payload: {
-    title: string;
-    body: string;
-    link?: string;
-    severity?: 'info' | 'warning' | 'danger';
-  },
-) {
-  const uniq = [...new Set(userIds.filter(Boolean))];
-  if (!uniq.length) return;
-
-  // 1) DB insert
-  await prisma.notification.createMany({
-    data: uniq.map((uid) => ({
-      userId: uid,
-      title: payload.title,
-      body: payload.body,
-      link: payload.link ?? null,
-      severity: (payload.severity ?? 'info') as any,
-      status: 'Unread' as any,
-    })),
-  });
-
-  // 2) WS broadcast via gateway
+/**
+ * تحميل إعدادات SLA من قاعدة البيانات
+ * لو لم توجد، نستخدم قيم افتراضية معقولة
+ */
+async function loadSlaConfig(): Promise<SlaConfig> {
   try {
-    ensureWS().emit('notify-users', {
-      userIds: uniq,
-      payload: { ...payload, at: new Date().toISOString() },
-    });
-  } catch (e) {
-    console.error('[worker] WS emit error:', e);
+    const row = await prisma.slaSettings.findFirst({
+      orderBy: { id: 'asc' },
+    } as any);
+
+    if (!row) {
+      console.warn(
+        '[SLA-WORKER] no SlaSettings row found, using defaults (60, 120, 240, 480)',
+      );
+      return {
+        escalateL1Minutes: 60,
+        escalateL2Minutes: 120,
+        escalateL3Minutes: 240,
+        escalateL4Minutes: 480,
+      };
+    }
+
+    return {
+      escalateL1Minutes: Number((row as any).escalateL1Minutes ?? 60),
+      escalateL2Minutes: Number((row as any).escalateL2Minutes ?? 120),
+      escalateL3Minutes: Number((row as any).escalateL3Minutes ?? 240),
+      escalateL4Minutes: Number((row as any).escalateL4Minutes ?? 480),
+    };
+  } catch (err) {
+    console.error(
+      '[SLA-WORKER] failed to load SlaSettings, using defaults',
+      err,
+    );
+    return {
+      escalateL1Minutes: 60,
+      escalateL2Minutes: 120,
+      escalateL3Minutes: 240,
+      escalateL4Minutes: 480,
+    };
   }
 }
 
-async function tick() {
+/**
+ * حساب مستوى التصعيد المستهدف بناءً على مدة التأخير والدقائق المعرفة في الإعدادات
+ * 0 = بدون تصعيد
+ * 1..4 = مستويات التصعيد
+ */
+function computeTargetLevel(
+  dueAt: Date | null,
+  cfg: SlaConfig,
+  now: Date,
+): number {
+  if (!dueAt) return 0;
+  const diffMs = now.getTime() - dueAt.getTime();
+  if (diffMs <= 0) return 0; // لم يحن موعد الاستحقاق بعد
+
+  const overdueMinutes = diffMs / 60000;
+
+  let level = 0;
+  if (overdueMinutes >= cfg.escalateL1Minutes) level = 1;
+  if (overdueMinutes >= cfg.escalateL2Minutes) level = 2;
+  if (overdueMinutes >= cfg.escalateL3Minutes) level = 3;
+  if (overdueMinutes >= cfg.escalateL4Minutes) level = 4;
+
+  return level;
+}
+
+async function runScan() {
   const now = new Date();
-
-  // (أ) تذكير قبل الاستحقاق
-  const remindThreshold = new Date(
-    now.getTime() + REMINDER_MIN_BEFORE * 60 * 1000,
+  console.log(
+    `[SLA-WORKER] running scan at ${now.toISOString()} (interval = ${INTERVAL_MS} ms)`,
   );
-  const toRemind = await prisma.incomingDistribution.findMany({
+
+  // تحميل إعدادات التصعيد
+  const cfg = await loadSlaConfig();
+
+  // التوزيعات المتأخرة: لها dueAt < now وحالتها Open / InProgress / Escalated
+  const dists = await prisma.incomingDistribution.findMany({
     where: {
-      status: { in: [DistributionStatus.Open, DistributionStatus.InProgress] },
-      dueAt: { not: null, gte: now, lte: remindThreshold },
-    },
-    select: {
-      id: true,
-      incomingId: true,
-      dueAt: true,
-      priority: true,
-      targetDepartmentId: true,
-      assignedToUserId: true,
-    },
-    take: 500,
-  });
-
-  for (const d of toRemind) {
-    await prisma.timelineEvent.create({
-      data: {
-        docId: d.incomingId,
-        docType: 'INCOMING',
-        eventType: 'SLA_REMINDER',
-        details: { dueAt: d.dueAt, priority: d.priority, distributionId: d.id },
-      },
-    });
-
-    // إشعار “قرب الاستحقاق” (اختياري)
-    const recipients: number[] = [];
-    if (d.assignedToUserId) recipients.push(d.assignedToUserId);
-    const mgr = await pickManagerForDepartment(d.targetDepartmentId);
-    if (mgr) recipients.push(mgr);
-
-    await notifyUsers(recipients, {
-      title: 'تذكير استحقاق',
-      body: `المعاملة #${d.incomingId} تقترب من موعد الاستحقاق.`,
-      link: `/incoming/${d.incomingId}`,
-      severity: 'warning',
-    });
-  }
-
-  // (ب) تصعيد عند التأخر
-  const overdue = await prisma.incomingDistribution.findMany({
-    where: {
-      status: { in: [DistributionStatus.Open, DistributionStatus.InProgress] },
+      status: { in: ['Open', 'InProgress', 'Escalated'] as any },
       dueAt: { not: null, lt: now },
     },
     select: {
       id: true,
-      incomingId: true,
+      status: true,
       dueAt: true,
-      priority: true,
       escalationCount: true,
-      targetDepartmentId: true,
       assignedToUserId: true,
+      incoming: {
+        select: {
+          id: true,
+          incomingNumber: true,
+          documentId: true,
+        },
+      },
     },
-    take: 500,
   });
 
-  for (const d of overdue) {
-    const elapsedMin = Math.floor(
-      (now.getTime() - new Date(d.dueAt!).getTime()) / 60000,
-    );
-    const nextLevel = POLICY.slice()
-      .reverse()
-      .find((p) => elapsedMin >= p.afterMinutesOverdue);
-    if (!nextLevel) continue;
+  if (!dists.length) {
+    console.log('[SLA-WORKER] no overdue distributions to escalate.');
+    return;
+  }
 
-    const newPriority = Math.max(0, (d.priority ?? 0) + nextLevel.priorityBump);
-    const newEscCount = (d.escalationCount ?? 0) + 1;
+  console.log(
+    `[SLA-WORKER] found ${dists.length} overdue distributions to check for escalation.`,
+  );
 
-    await prisma.incomingDistribution.update({
-      where: { id: d.id },
-      data: {
-        escalationCount: newEscCount,
-        priority: newPriority,
-        lastUpdateAt: new Date(),
-      },
-    });
+  for (const d of dists) {
+    const currentLevel = d.escalationCount ?? 0;
+    const targetLevel = computeTargetLevel(d.dueAt, cfg, now);
 
-    await prisma.timelineEvent.create({
-      data: {
-        docId: d.incomingId,
-        docType: 'INCOMING',
-        eventType: 'SLA_ESCALATION',
-        details: {
-          dueAt: d.dueAt,
-          escalationCount: newEscCount,
-          distributionId: d.id,
-          elapsedMin,
-        },
-      },
-    });
-
-    // إشعارات التصعيد
-    const recipients: number[] = [];
-    if (nextLevel.notifyAssignee && d.assignedToUserId)
-      recipients.push(d.assignedToUserId);
-    if (nextLevel.notifyManager) {
-      const mgr = await pickManagerForDepartment(d.targetDepartmentId);
-      if (mgr) recipients.push(mgr);
+    // لو المفروض تكون في نفس المستوى الحالي أو أقل => لا نعمل شيء
+    if (!targetLevel || targetLevel <= currentLevel) {
+      continue;
     }
-    if (nextLevel.notifyAdmin) {
-      const admins = await prisma.user.findMany({
-        where: {
-          isActive: true,
-          UserRole: { some: { Role: { roleName: 'ADMIN' } } },
-        },
-        select: { id: true },
+
+    try {
+      await prisma.$transaction(async (tx) => {
+        const updated = await tx.incomingDistribution.update({
+          where: { id: d.id },
+          data: {
+            status: 'Escalated' as any, // نتأكد أنها Escalated
+            escalationCount: targetLevel,
+            lastUpdateAt: new Date(),
+          },
+          select: {
+            id: true,
+            status: true,
+            assignedToUserId: true,
+            incoming: {
+              select: {
+                id: true,
+                documentId: true,
+                incomingNumber: true,
+              },
+            },
+          },
+        });
+
+        const lvlLabel = `المستوى ${targetLevel}`;
+
+        // سجل في Log التوزيع
+        await tx.incomingDistributionLog.create({
+          data: {
+            distributionId: d.id,
+            oldStatus: d.status as any,
+            newStatus: 'Escalated' as any,
+            note: `تم التصعيد تلقائيًا (${lvlLabel}) بواسطة نظام SLA بسبب تأخر المعاملة عن موعد الاستحقاق.`,
+            updatedByUserId: 1, // System admin
+          },
+        });
+
+        // سجل في AuditTrail (لو فيه documentId)
+        if (updated.incoming?.documentId) {
+          await tx.auditTrail.create({
+            data: {
+              documentId: updated.incoming.documentId,
+              userId: 1,
+              actionType: 'ESCALATED',
+              actionDescription:
+                `تم التصعيد تلقائيًا (${lvlLabel}) بواسطة نظام SLA` +
+                (updated.incoming.incomingNumber
+                  ? ` للوارد ${updated.incoming.incomingNumber}`
+                  : ''),
+            },
+          });
+        }
+
+        // 🔔 إنشاء إشعار للمستخدم المكلّف (أو المسؤول رقم 1 لو لا يوجد مكلّف)
+        const targetUserId = updated.assignedToUserId ?? 1;
+
+        await tx.notification.create({
+          data: {
+            userId: targetUserId,
+            title: `تنبيه SLA - معاملة متأخرة (${lvlLabel})`,
+            body:
+              `تم تصعيد معاملة بسبب تأخرها عن موعد الاستحقاق` +
+              (updated.incoming?.incomingNumber
+                ? ` (الوارد ${updated.incoming.incomingNumber}).`
+                : '.'),
+            link: updated.incoming
+              ? `/incoming/${updated.incoming.id}`
+              : null,
+            severity:
+              targetLevel >= 3 ? ('danger' as any) : ('warning' as any),
+            status: 'Unread' as any,
+          },
+        });
       });
-      recipients.push(...admins.map((a) => a.id));
-    }
 
-    await notifyUsers(recipients, {
-      title: `تصعيد مستوى L${nextLevel.level}`,
-      body: `تم تصعيد المعاملة #${d.incomingId} (تأخير ${elapsedMin} دقيقة) — الأولوية الآن ${newPriority}.`,
-      link: `/incoming/${d.incomingId}`,
-      severity: nextLevel.level >= 2 ? 'danger' : 'warning',
-    });
+      console.log(
+        `[SLA-WORKER] escalated distribution #${d.id} from level ${currentLevel} to level ${targetLevel}.`,
+      );
+    } catch (err) {
+      console.error(
+        `[SLA-WORKER] failed to escalate distribution #${d.id}`,
+        err,
+      );
+    }
   }
 }
-
-// يغلّف tick مع التقاط الأخطاء
-const safeTick = () =>
-  tick().catch((e) => console.error('Worker tick error:', e));
 
 async function main() {
   console.log(
-    `SLA Worker booting... (cron=${CRON_EXPR ?? '—'}, everyMs=${EVERY_MS ?? '—'}, remindBeforeMin=${REMINDER_MIN_BEFORE})`,
+    `[SLA-WORKER] starting... interval = ${INTERVAL_MS} ms`,
   );
-  ensureWS();
-  await safeTick();
 
-  if (CRON_EXPR) {
-    console.log(`Scheduling with CRON: ${CRON_EXPR}`);
-    cron.schedule(CRON_EXPR, safeTick, {
-      timezone: process.env.TZ || undefined,
-    });
-  } else if (EVERY_MS && EVERY_MS > 0) {
-    console.log(`Scheduling with setInterval: every ${EVERY_MS} ms`);
-    setInterval(safeTick, EVERY_MS);
-  } else {
-    const fallback = 5 * 60 * 1000;
-    console.log(
-      `No schedule env provided. Using default interval: ${fallback} ms (5 minutes)`,
+  // أول فحص فورًا
+  await runScan();
+
+  // ثم فحص دوري كل INTERVAL_MS
+  setInterval(() => {
+    runScan().catch((err) =>
+      console.error('[SLA-WORKER] scan error', err),
     );
-    setInterval(safeTick, fallback);
-  }
+  }, INTERVAL_MS);
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
+main().catch((err) => {
+  console.error('[SLA-WORKER] fatal startup error', err);
 });
+
+
+
+
 
 // // src/worker.ts
 
-// import 'dotenv/config';
-// import { PrismaClient, DistributionStatus } from '@prisma/client';
-// import cron from 'node-cron';
+// import { PrismaClient } from '@prisma/client';
 
 // const prisma = new PrismaClient();
 
-// // نمط كرون (مثلاً: '*/5 * * * *' كل 5 دقائق)
-// const CRON_EXPR: string | undefined = process.env.SLA_SCAN_INTERVAL_CRON?.trim()
-//   ? String(process.env.SLA_SCAN_INTERVAL_CRON).trim()
-//   : undefined;
+// // الفترة بين كل فحص وفحص (بالمللي ثانية)
+// const INTERVAL_MS = Number(process.env.SLA_SCAN_EVERY_MS || '300000');
 
-// // بديل عدّاد بالميلي ثانية (مثلاً: 300000 = 5 دقائق)
-// const EVERY_MS_ENV = process.env.SLA_SCAN_EVERY_MS?.trim();
-// const EVERY_MS: number | undefined =
-//   EVERY_MS_ENV && !Number.isNaN(Number(EVERY_MS_ENV)) ? Number(EVERY_MS_ENV) : undefined;
+// /**
+//  * إعدادات مستويات التصعيد القادمة من جدول SlaSettings
+//  */
+// type SlaConfig = {
+//   escalateL1Minutes: number;
+//   escalateL2Minutes: number;
+//   escalateL3Minutes: number;
+//   escalateL4Minutes: number;
+// };
 
-// // تذكير قبل كم دقيقة من تاريخ الاستحقاق
-// const REMINDER_MIN_BEFORE: number =
-//   process.env.SLA_REMINDER_MINUTES_BEFORE && !Number.isNaN(Number(process.env.SLA_REMINDER_MINUTES_BEFORE))
-//     ? Number(process.env.SLA_REMINDER_MINUTES_BEFORE)
-//     : 30;
+// /**
+//  * تحميل إعدادات SLA من قاعدة البيانات
+//  * لو لم توجد، نستخدم قيم افتراضية معقولة
+//  */
+// async function loadSlaConfig(): Promise<SlaConfig> {
+//   try {
+//     const row = await prisma.slaSettings.findFirst({
+//       orderBy: { id: 'asc' },
+//     } as any);
 
-// async function tick() {
-//   const now = new Date();
+//     if (!row) {
+//       console.warn(
+//         '[SLA-WORKER] no SlaSettings row found, using defaults (60, 120, 240, 480)',
+//       );
+//       return {
+//         escalateL1Minutes: 60,  // تصعيد مستوى 1 بعد 60 دقيقة من التأخير
+//         escalateL2Minutes: 120,
+//         escalateL3Minutes: 240,
+//         escalateL4Minutes: 480,
+//       };
+//     }
 
-//   // تذكير قبل الاستحقاق
-//   const remindThreshold = new Date(now.getTime() + REMINDER_MIN_BEFORE * 60 * 1000);
-//   const toRemind = await prisma.incomingDistribution.findMany({
-//     where: {
-//       status: { in: [DistributionStatus.Open, DistributionStatus.InProgress] },
-//       dueAt: { not: null, gte: now, lte: remindThreshold },
-//     },
-//     include: { incoming: true },
-//     take: 500,
-//   });
-
-//   for (const d of toRemind) {
-//     await prisma.timelineEvent.create({
-//       data: {
-//         docId: d.incomingId,
-//         docType: 'INCOMING',
-//         eventType: 'SLA_REMINDER',
-//         details: { dueAt: d.dueAt, priority: d.priority, distributionId: d.id },
-//       },
-//     });
+//     return {
+//       escalateL1Minutes: Number((row as any).escalateL1Minutes ?? 60),
+//       escalateL2Minutes: Number((row as any).escalateL2Minutes ?? 120),
+//       escalateL3Minutes: Number((row as any).escalateL3Minutes ?? 240),
+//       escalateL4Minutes: Number((row as any).escalateL4Minutes ?? 480),
+//     };
+//   } catch (err) {
+//     console.error(
+//       '[SLA-WORKER] failed to load SlaSettings, using defaults',
+//       err,
+//     );
+//     return {
+//       escalateL1Minutes: 60,
+//       escalateL2Minutes: 120,
+//       escalateL3Minutes: 240,
+//       escalateL4Minutes: 480,
+//     };
 //   }
+// }
 
-//   // تصعيد عند التأخر عن الاستحقاق
-//   const overdue = await prisma.incomingDistribution.findMany({
+// /**
+//  * حساب مستوى التصعيد المستهدف بناءً على مدة التأخير والدقائق المعرفة في الإعدادات
+//  * 0 = بدون تصعيد
+//  * 1..4 = مستويات التصعيد
+//  */
+// function computeTargetLevel(
+//   dueAt: Date | null,
+//   cfg: SlaConfig,
+//   now: Date,
+// ): number {
+//   if (!dueAt) return 0;
+//   const diffMs = now.getTime() - dueAt.getTime();
+//   if (diffMs <= 0) return 0; // لم يحن موعد الاستحقاق بعد
+
+//   const overdueMinutes = diffMs / 60000;
+
+//   let level = 0;
+//   if (overdueMinutes >= cfg.escalateL1Minutes) level = 1;
+//   if (overdueMinutes >= cfg.escalateL2Minutes) level = 2;
+//   if (overdueMinutes >= cfg.escalateL3Minutes) level = 3;
+//   if (overdueMinutes >= cfg.escalateL4Minutes) level = 4;
+
+//   return level;
+// }
+
+// async function runScan() {
+//   const now = new Date();
+//   console.log(
+//     `[SLA-WORKER] running scan at ${now.toISOString()} (interval = ${INTERVAL_MS} ms)`,
+//   );
+
+//   // 🔹 تحميل إعدادات مستويات التصعيد من قاعدة البيانات
+//   const cfg = await loadSlaConfig();
+
+//   // 🔹 نبحث عن كل التوزيعات:
+//   // - حالتها Open أو InProgress أو Escalated (مغلقة لا تُلمس)
+//   // - لها dueAt
+//   // - موعد الاستحقاق أقل من الآن (متأخرة)
+//   const dists = await prisma.incomingDistribution.findMany({
 //     where: {
-//       status: { in: [DistributionStatus.Open, DistributionStatus.InProgress] },
+//       status: { in: ['Open', 'InProgress', 'Escalated'] as any },
 //       dueAt: { not: null, lt: now },
 //     },
-//     include: { incoming: true },
-//     take: 500,
+//     select: {
+//       id: true,
+//       status: true,
+//       dueAt: true,
+//       escalationCount: true,
+//       incoming: {
+//         select: {
+//           id: true,
+//           incomingNumber: true,
+//           documentId: true,
+//         },
+//       },
+//     },
 //   });
 
-//   for (const d of overdue) {
-//     await prisma.incomingDistribution.update({
-//       where: { id: d.id },
-//       data: { escalationCount: { increment: 1 }, lastUpdateAt: new Date() },
-//     });
-
-//     await prisma.timelineEvent.create({
-//       data: {
-//         docId: d.incomingId,
-//         docType: 'INCOMING',
-//         eventType: 'SLA_ESCALATION',
-//         details: { dueAt: d.dueAt, escalationCount: d.escalationCount + 1, distributionId: d.id },
-//       },
-//     });
+//   if (!dists.length) {
+//     console.log('[SLA-WORKER] no overdue distributions to escalate.');
+//     return;
 //   }
 
-//   // TODO: لاحقًا—إشعار رئيس القسم/بريد/تليجرام
-// }
+//   console.log(
+//     `[SLA-WORKER] found ${dists.length} overdue distributions to check for escalation.`,
+//   );
 
-// // يغلّف tick مع التقاط الأخطاء لتفادي توقف الجدولة
-// const safeTick = () =>
-//   tick().catch((e) => {
-//     console.error('Worker tick error:', e);
-//   });
+//   for (const d of dists) {
+//     const currentLevel = d.escalationCount ?? 0;
+//     const targetLevel = computeTargetLevel(d.dueAt, cfg, now);
+
+//     // لو المفروض تكون في نفس المستوى الحالي أو أقل => لا نعمل شيء
+//     if (!targetLevel || targetLevel <= currentLevel) {
+//       continue;
+//     }
+
+//     try {
+//       await prisma.$transaction(async (tx) => {
+//         const updated = await tx.incomingDistribution.update({
+//           where: { id: d.id },
+//           data: {
+//             status: 'Escalated' as any, // نتأكّد أنها في حالة Escalated
+//             escalationCount: targetLevel,
+//             lastUpdateAt: new Date(),
+//           },
+//           select: {
+//             id: true,
+//             incoming: {
+//               select: {
+//                 documentId: true,
+//                 incomingNumber: true,
+//               },
+//             },
+//           },
+//         });
+
+//         const lvlLabel = `المستوى ${targetLevel}`;
+
+//         // سجلّ في Log التوزيع
+//         await tx.incomingDistributionLog.create({
+//           data: {
+//             distributionId: d.id,
+//             oldStatus: d.status as any,
+//             newStatus: 'Escalated' as any,
+//             note: `تم التصعيد تلقائيًا (${lvlLabel}) بواسطة نظام SLA بسبب تأخر المعاملة عن موعد الاستحقاق.`,
+//             updatedByUserId: 1, // System admin
+//           },
+//         });
+
+//         // سجلّ في AuditTrail لو فيه documentId
+//         if (updated.incoming?.documentId) {
+//           await tx.auditTrail.create({
+//             data: {
+//               documentId: updated.incoming.documentId,
+//               userId: 1,
+//               actionType: 'ESCALATED',
+//               actionDescription:
+//                 `تم التصعيد تلقائيًا (${lvlLabel}) بواسطة نظام SLA` +
+//                 (updated.incoming.incomingNumber
+//                   ? ` للوارد ${updated.incoming.incomingNumber}`
+//                   : ''),
+//             },
+//           });
+//         }
+//       });
+
+//       console.log(
+//         `[SLA-WORKER] escalated distribution #${d.id} from level ${currentLevel} to level ${targetLevel}.`,
+//       );
+//     } catch (err) {
+//       console.error(
+//         `[SLA-WORKER] failed to escalate distribution #${d.id}`,
+//         err,
+//       );
+//     }
+//   }
+// }
 
 // async function main() {
-//   // تشغيل فوري مرة واحدة عند البدء
 //   console.log(
-//     `SLA Worker booting... (cron=${CRON_EXPR ?? '—'}, everyMs=${EVERY_MS ?? '—'}, remindBeforeMin=${REMINDER_MIN_BEFORE})`
+//     `[SLA-WORKER] starting... interval = ${INTERVAL_MS} ms`,
 //   );
-//   await safeTick();
 
-//   // اختر آلية الجدولة
-//   if (CRON_EXPR) {
-//     // 🕘 جدولة بنمط كرون
-//     console.log(`Scheduling with CRON: ${CRON_EXPR}`);
-//     cron.schedule(CRON_EXPR, safeTick, { timezone: process.env.TZ || undefined });
-//   } else if (EVERY_MS && EVERY_MS > 0) {
-//     // ⏱️ جدولة بفاصل زمني ثابت
-//     console.log(`Scheduling with setInterval: every ${EVERY_MS} ms`);
-//     setInterval(safeTick, EVERY_MS);
-//   } else {
-//     // افتراضي: كل 5 دقائق
-//     const fallback = 5 * 60 * 1000;
-//     console.log(`No schedule env provided. Using default interval: ${fallback} ms (5 minutes)`);
-//     setInterval(safeTick, fallback);
-//   }
+//   // أول فحص فورًا
+//   await runScan();
+
+//   // ثم فحص دوري كل INTERVAL_MS
+//   setInterval(() => {
+//     runScan().catch((err) =>
+//       console.error('[SLA-WORKER] scan error', err),
+//     );
+//   }, INTERVAL_MS);
 // }
 
-// main().catch((e) => {
-//   console.error(e);
-//   process.exit(1);
+// main().catch((err) => {
+//   console.error('[SLA-WORKER] fatal startup error', err);
 // });
+
+
+
