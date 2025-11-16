@@ -67,22 +67,30 @@ export class IncomingController {
     });
   }
 
+  // @RequirePermissions(PERMISSIONS.INCOMING_READ)
+  // @Get('my-desk/sla-summary')
+  // @HttpCode(200)
+  // async myDeskSlaSummary(@Req() req: any): Promise<ApiResponse<any>> {
+  //   try {
+  //     const data = await this.incomingService.myDeskSlaSummary(req.user);
+  //     return { success: true, data };
+  //   } catch (err: any) {
+  //     return {
+  //       success: false,
+  //       error: {
+  //         code: 'SLA_SUMMARY_FAILED',
+  //         message: err?.message ?? 'تعذّر تحميل ملخص الـ SLA لمكتبي',
+  //       },
+  //     };
+  //   }
+  // }
+
+  // ✅ ملخص SLA لمعاملات "مكتبي"
   @RequirePermissions(PERMISSIONS.INCOMING_READ)
   @Get('my-desk/sla-summary')
-  @HttpCode(200)
-  async myDeskSlaSummary(@Req() req: any): Promise<ApiResponse<any>> {
-    try {
-      const data = await this.incomingService.myDeskSlaSummary(req.user);
-      return { success: true, data };
-    } catch (err: any) {
-      return {
-        success: false,
-        error: {
-          code: 'SLA_SUMMARY_FAILED',
-          message: err?.message ?? 'تعذّر تحميل ملخص الـ SLA لمكتبي',
-        },
-      };
-    }
+  async myDeskSlaSummary(@Req() req: Request) {
+    const user = (req as any).user;
+    return this.incomingService.myDeskSlaSummary(user);
   }
 
   // ✅ تحديث SLA للتوزيع (احتفظنا بهذه النسخة لأنها توافق توقيع الخدمة)
