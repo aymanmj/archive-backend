@@ -27,6 +27,7 @@ import { SecurityModule } from './security/security.module';
 import { TimelineModule } from './timeline/timeline.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { EscalationModule } from './escalation/escalation.module';
+import { SlaModule } from './sla/sla.module';
 
 function baseImports() {
   return [
@@ -45,6 +46,7 @@ function baseImports() {
     SecurityModule,
     TimelineModule,
     EscalationModule,
+    SlaModule,
   ];
 }
 

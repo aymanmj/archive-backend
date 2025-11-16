@@ -8,7 +8,7 @@ import {
 import { PrismaService } from 'src/prisma/prisma.service';
 import { Prisma } from '@prisma/client';
 import { extractUserContext } from 'src/common/auth.util';
-import { computeSlaInfo, SlaInfo } from 'src/sla/sla.util';
+import { computeSlaInfo } from 'src/sla/sla.util';
 
 type PageParams = {
   page: number;
@@ -329,22 +329,6 @@ export class IncomingService {
       this.prisma.incomingDistribution.count({ where: whereDist }),
     ]);
 
-    // const rows = items.map((d) => ({
-    //   id: String(d.id),
-    //   distributionId: String(d.id),
-    //   status: d.status,
-    //   lastUpdateAt: d.lastUpdateAt,
-    //   incomingId: String(d.incomingId),
-    //   incomingNumber: d.incoming?.incomingNumber,
-    //   receivedDate: d.incoming?.receivedDate,
-    //   externalPartyName: d.incoming?.externalParty?.name ?? '—',
-    //   document: d.incoming?.document || null,
-    //   // SLA
-    //   dueAt: d.dueAt ?? null,
-    //   priority: d.priority ?? 0,
-    //   escalationCount: d.escalationCount ?? 0,
-    // }));
-
     const rows = items.map((d) => ({
       id: String(d.id),
       distributionId: String(d.id),
@@ -629,18 +613,7 @@ export class IncomingService {
         uploadedAt: f.uploadedAt,
         versionNumber: f.versionNumber,
       })),
-      // distributions: incoming.distributions.map((d) => ({
-      //   id: String(d.id),
-      //   status: d.status,
-      //   targetDepartmentName: d.targetDepartment?.name ?? '—',
-      //   assignedToUserName: d.assignedToUser?.fullName ?? null,
-      //   lastUpdateAt: d.lastUpdateAt,
-      //   notes: d.notes ?? null,
-      //   // SLA
-      //   dueAt: d.dueAt ?? null,
-      //   priority: d.priority ?? 0,
-      //   escalationCount: d.escalationCount ?? 0,
-      // })),
+
       distributions: incoming.distributions.map((d) => ({
         id: String(d.id),
         status: d.status,
@@ -1066,7 +1039,9 @@ export class IncomingService {
           documentId: dist.incoming.documentId,
           userId: userId || 1,
           actionType: 'DIST_STATUS',
-          actionDescription: `تغيير حالة التوزيع إلى ${status}${note ? ` — ${note}` : ''}`,
+          actionDescription: `تغيير حالة التوزيع إلى ${status}${
+            note ? ` — ${note}` : ''
+          }`,
           fromIP: meta?.ip ?? undefined,
           workstationName: meta?.workstation ?? undefined,
         },
@@ -1090,7 +1065,7 @@ export class IncomingService {
       typeof payload.priority === 'number' ? payload.priority : undefined;
 
     return this.prisma.$transaction(async (tx) => {
-      const dist = await tx.incomingDistribution.findUnique({
+      const dist = await this.prisma.incomingDistribution.findUnique({
         where: { id: distId },
         select: { id: true, incoming: { select: { documentId: true } } },
       });
@@ -1110,7 +1085,9 @@ export class IncomingService {
           distributionId: distId,
           oldStatus: null,
           newStatus: null,
-          note: `تحديث SLA: dueAt=${dueAtDate ?? '—'}, priority=${priority ?? '—'}`,
+          note: `تحديث SLA: dueAt=${dueAtDate ?? '—'}, priority=${
+            priority ?? '—'
+          }`,
           updatedByUserId: userId || 1,
         },
       });
@@ -1167,7 +1144,9 @@ export class IncomingService {
           documentId: dist.incoming.documentId,
           userId: userId || 1,
           actionType: 'ASSIGN',
-          actionDescription: `تعيين مكلّف ${assignedToUserId}${note ? ` — ${note}` : ''}`,
+          actionDescription: `تعيين مكلّف ${assignedToUserId}${
+            note ? ` — ${note}` : ''
+          }`,
           fromIP: meta?.ip ?? undefined,
           workstationName: meta?.workstation ?? undefined,
         },
@@ -1272,6 +1251,66 @@ export class IncomingService {
       }),
     ]);
     return { open, inProgress: prog, closed };
+  }
+
+  // *** My-desk SLA summary ***
+  async myDeskSlaSummary(reqUser: any) {
+    // نفس قاعدة "مكتبي" السابقة
+    const base: Prisma.IncomingDistributionWhereInput = {
+      OR: [
+        { assignedToUserId: reqUser?.id || 0 },
+        { targetDepartmentId: reqUser?.departmentId || 0 },
+      ],
+      // نهتم فقط بما هو قيد العمل أو تمت تصعيده
+      status: { in: ['Open', 'InProgress', 'Escalated'] as any },
+    };
+
+    const rows = await this.prisma.incomingDistribution.findMany({
+      where: base,
+      select: {
+        dueAt: true,
+        status: true,
+        escalationCount: true,
+      },
+    });
+
+    const summary = {
+      total: rows.length,
+      noSla: 0,
+      onTrack: 0,
+      dueSoon: 0,
+      overdue: 0,
+      escalated: 0,
+    };
+
+    for (const r of rows) {
+      const info = computeSlaInfo({
+        dueAt: r.dueAt,
+        status: r.status as any,
+        escalationCount: r.escalationCount ?? 0,
+      });
+
+      switch (info.status) {
+        case 'NoSla':
+          summary.noSla++;
+          break;
+        case 'OnTrack':
+          summary.onTrack++;
+          break;
+        case 'DueSoon':
+          summary.dueSoon++;
+          break;
+        case 'Overdue':
+          summary.overdue++;
+          break;
+      }
+
+      if (info.isEscalated) {
+        summary.escalated++;
+      }
+    }
+
+    return summary;
   }
 }
 

@@ -678,3 +678,19 @@ model Notification {
 
   @@index([userId, status, createdAt])
 }
+
+
+model SlaSettings {
+  id                 Int      @id @default(1)
+  dueSoonHours       Int      @default(24)   // بعد كم ساعة نعتبرها "قريبة من الانتهاء"
+  overdueHours       Int      @default(0)    // تأخير مسموح (ساعات) قبل اعتبارها "متأخرة"
+  escalateL1Minutes  Int      @default(60)   // تصعيد مستوى 1 بعد كم دقيقة من التأخير
+  escalateL2Minutes  Int      @default(120)
+  escalateL3Minutes  Int      @default(240)
+  escalateL4Minutes  Int      @default(480)
+
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@map("SlaSettings")
+}

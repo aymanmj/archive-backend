@@ -9,6 +9,7 @@ import {
   Query,
   Req,
   BadRequestException,
+  HttpCode,
   Param,
   UseGuards,
 } from '@nestjs/common';
@@ -17,6 +18,11 @@ import { RequirePermissions } from 'src/auth/permissions.decorator';
 import { PERMISSIONS } from 'src/auth/permissions.constants';
 import { IncomingService } from './incoming.service';
 import { extractClientMeta } from 'src/audit/audit.utils';
+
+// ====== أنواع استجابة الـ API العامة ======
+type ApiOk<T> = { success: true; data: T };
+type ApiErr = { success: false; error: { code: string; message: string } };
+type ApiResponse<T> = ApiOk<T> | ApiErr;
 
 @UseGuards(JwtAuthGuard)
 @Controller('incoming')
@@ -45,7 +51,7 @@ export class IncomingController {
     @Query('assigneeId') assigneeId?: string,
     @Query('incomingNumber') incomingNumber?: string,
     @Query('distributionId') distributionId?: string,
-    @Query('scope') scope?: 'overdue' | 'today' | 'week' | 'escalated', // 👈 أضفنا escalated هنا
+    @Query('scope') scope?: 'overdue' | 'today' | 'week' | 'escalated',
   ) {
     return this.incomingService.myDesk(req.user, {
       page: Number(page) || 1,
@@ -59,6 +65,24 @@ export class IncomingController {
       distributionId,
       scope,
     });
+  }
+
+  @RequirePermissions(PERMISSIONS.INCOMING_READ)
+  @Get('my-desk/sla-summary')
+  @HttpCode(200)
+  async myDeskSlaSummary(@Req() req: any): Promise<ApiResponse<any>> {
+    try {
+      const data = await this.incomingService.myDeskSlaSummary(req.user);
+      return { success: true, data };
+    } catch (err: any) {
+      return {
+        success: false,
+        error: {
+          code: 'SLA_SUMMARY_FAILED',
+          message: err?.message ?? 'تعذّر تحميل ملخص الـ SLA لمكتبي',
+        },
+      };
+    }
   }
 
   // ✅ تحديث SLA للتوزيع (احتفظنا بهذه النسخة لأنها توافق توقيع الخدمة)
@@ -255,6 +279,7 @@ export class IncomingController {
     return this.incomingService.myDeskStatus(req.user);
   }
 }
+
 
 // import {
 //   Body,
