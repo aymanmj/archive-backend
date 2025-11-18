@@ -36,9 +36,15 @@ export class NotificationsGateway {
   }
 
   // helper لو احتجته من داخل Nest
+  // emitToUsers(userIds: number[], event: string, payload: any) {
+  //   for (const uid of userIds) {
+  //     this.server.to(`user:${uid}`).emit(event, payload);
+  //   }
+  // }
+
   emitToUsers(userIds: number[], event: string, payload: any) {
-    for (const uid of userIds) {
-      this.server.to(`user:${uid}`).emit(event, payload);
-    }
+    userIds.forEach((id) => {
+      this.server.to(`user:${id}`).emit(event, payload);
+    });
   }
 }
